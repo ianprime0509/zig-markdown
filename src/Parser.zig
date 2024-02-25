@@ -24,6 +24,10 @@ const Block = struct {
     string_start: usize,
 
     const Tag = enum {
+        /// Data is `list`.
+        list,
+        /// Data is `list_item`.
+        list_item,
         /// Data is `heading`.
         heading,
         /// Data is `code_block`.
@@ -38,15 +42,26 @@ const Block = struct {
 
     const Data = union {
         none: void,
+        list: struct {
+            tight: bool,
+            marker: ListMarker,
+            /// Between 0 and 999,999,999, inclusive.
+            start: u30,
+        },
+        list_item: struct {
+            indent: usize,
+        },
         heading: struct {
             /// Between 1 and 6, inclusive.
             level: u3,
         },
         code_block: struct {
             tag: StringIndex,
-            indent: usize,
             fence_len: usize,
+            indent: usize,
         },
+
+        const ListMarker = enum { @"-", @"*", number };
     };
 
     const ContentType = enum {
@@ -57,11 +72,18 @@ const Block = struct {
 
     fn canAccept(b: Block) ContentType {
         return switch (b.tag) {
-            .heading => .inlines,
-            .code_block => .inlines,
-            .blockquote => .blocks,
-            .paragraph => .inlines,
-            .thematic_break => .nothing,
+            .list,
+            .list_item,
+            .blockquote,
+            => .blocks,
+
+            .heading,
+            .code_block,
+            .paragraph,
+            => .inlines,
+
+            .thematic_break,
+            => .nothing,
         };
     }
 
@@ -69,6 +91,11 @@ const Block = struct {
         const unindented = mem.trimLeft(u8, line, " \t");
         const indent = line.len - unindented.len;
         return switch (b.tag) {
+            .list => line,
+            .list_item => if (indent > b.data.list_item.indent)
+                line[b.data.list_item.indent..]
+            else
+                null,
             .heading => null,
             .code_block => code_block: {
                 const trimmed = mem.trimRight(u8, unindented, " \t");
@@ -134,7 +161,7 @@ pub fn feedLine(p: *Parser, line: []const u8) Allocator.Error!void {
     // This is a lazy continuation line if there are no new blocks to open and
     // the last open block is a paragraph.
     if (maybe_block_start == null and
-        mem.indexOfNone(u8, rest_line, " \t") != null and
+        !isBlank(rest_line) and
         p.pending_blocks.items.len > 0 and
         p.pending_blocks.getLast().tag == .paragraph)
     {
@@ -157,19 +184,12 @@ pub fn feedLine(p: *Parser, line: []const u8) Allocator.Error!void {
     }
 
     while (maybe_block_start) |block_start| : (maybe_block_start = try p.startBlock(rest_line)) {
-        try p.pending_blocks.append(p.allocator, .{
-            .tag = block_start.tag,
-            .data = block_start.data,
-            .string_start = p.scratch_string.items.len,
-            .extra_start = p.scratch_extra.items.len,
-        });
+        try p.appendBlockStart(block_start);
         // There may be more blocks to start within the same line.
         rest_line = block_start.rest;
         // Headings may only contain inline content.
         if (block_start.tag == .heading) break;
     }
-
-    rest_line = mem.trimLeft(u8, rest_line, " \t");
 
     // Do not append the end of a code block (```) as textual content.
     if (code_block_end) return;
@@ -180,12 +200,11 @@ pub fn feedLine(p: *Parser, line: []const u8) Allocator.Error!void {
         .blocks;
     switch (can_accept) {
         .blocks => {
-            if (rest_line.len > 0) {
-                try p.pending_blocks.append(p.allocator, .{
+            if (!isBlank(rest_line)) {
+                try p.appendBlockStart(.{
                     .tag = .paragraph,
                     .data = .{ .none = {} },
-                    .string_start = p.scratch_string.items.len,
-                    .extra_start = p.scratch_extra.items.len,
+                    .rest = undefined,
                 });
                 try p.addScratchStringLine(rest_line);
             }
@@ -222,15 +241,112 @@ pub fn endInput(p: *Parser) Allocator.Error!Document {
 }
 
 const BlockStart = struct {
-    tag: Block.Tag,
-    data: Block.Data,
+    tag: Tag,
+    data: Data,
     rest: []const u8,
+
+    const Tag = enum {
+        /// Data is `list_item`.
+        list_item,
+        /// Data is `heading`.
+        heading,
+        /// Data is `code_block`.
+        code_block,
+        /// Data is `none`.
+        blockquote,
+        /// Data is `none`.
+        paragraph,
+        /// Data is `none`.
+        thematic_break,
+    };
+
+    const Data = union {
+        none: void,
+        list_item: struct {
+            marker: Block.Data.ListMarker,
+            number: u30,
+            indent: usize,
+        },
+        heading: struct {
+            /// Between 1 and 6, inclusive.
+            level: u3,
+        },
+        code_block: struct {
+            tag: StringIndex,
+            fence_len: usize,
+            indent: usize,
+        },
+    };
 };
 
-fn startBlock(p: *Parser, line: []const u8) Allocator.Error!?BlockStart {
+fn appendBlockStart(p: *Parser, block_start: BlockStart) !void {
+    // Close the last block if it is a list and the new block is not a list item
+    // or not of the same marker type.
+    if (p.pending_blocks.getLastOrNull()) |last_pending_block| {
+        if (last_pending_block.tag == .list and
+            (block_start.tag != .list_item or
+            block_start.data.list_item.marker != last_pending_block.data.list.marker))
+        {
+            try p.closeLastBlock();
+        }
+    }
+
+    // Start a new list if the new block is a list item and there is no
+    // containing list yet.
+    if (block_start.tag == .list_item and
+        (p.pending_blocks.items.len == 0 or p.pending_blocks.getLast().tag != .list))
+    {
+        try p.pending_blocks.append(p.allocator, .{
+            .tag = .list,
+            .data = .{ .list = .{
+                .tight = true,
+                .marker = block_start.data.list_item.marker,
+                .start = block_start.data.list_item.number,
+            } },
+            .string_start = p.scratch_string.items.len,
+            .extra_start = p.scratch_extra.items.len,
+        });
+    }
+
+    const tag: Block.Tag, const data: Block.Data = switch (block_start.tag) {
+        .list_item => .{ .list_item, .{ .list_item = .{
+            .indent = block_start.data.list_item.indent,
+        } } },
+        .heading => .{ .heading, .{ .heading = .{
+            .level = block_start.data.heading.level,
+        } } },
+        .code_block => .{ .code_block, .{ .code_block = .{
+            .tag = block_start.data.code_block.tag,
+            .fence_len = block_start.data.code_block.fence_len,
+            .indent = block_start.data.code_block.indent,
+        } } },
+        .blockquote => .{ .blockquote, .{ .none = {} } },
+        .paragraph => .{ .paragraph, .{ .none = {} } },
+        .thematic_break => .{ .thematic_break, .{ .none = {} } },
+    };
+
+    try p.pending_blocks.append(p.allocator, .{
+        .tag = tag,
+        .data = data,
+        .string_start = p.scratch_string.items.len,
+        .extra_start = p.scratch_extra.items.len,
+    });
+}
+
+fn startBlock(p: *Parser, line: []const u8) !?BlockStart {
     const unindented = mem.trimLeft(u8, line, " \t");
     const indent = line.len - unindented.len;
-    if (startHeading(unindented)) |heading| {
+    if (startListItem(unindented)) |list_item| {
+        return .{
+            .tag = .list_item,
+            .data = .{ .list_item = .{
+                .marker = list_item.marker,
+                .number = list_item.number,
+                .indent = indent,
+            } },
+            .rest = list_item.rest,
+        };
+    } else if (startHeading(unindented)) |heading| {
         return .{
             .tag = .heading,
             .data = .{ .heading = .{
@@ -243,8 +359,8 @@ fn startBlock(p: *Parser, line: []const u8) Allocator.Error!?BlockStart {
             .tag = .code_block,
             .data = .{ .code_block = .{
                 .tag = code_block.tag,
-                .indent = indent,
                 .fence_len = code_block.fence_len,
+                .indent = indent,
             } },
             .rest = "",
         };
@@ -263,6 +379,40 @@ fn startBlock(p: *Parser, line: []const u8) Allocator.Error!?BlockStart {
     } else {
         return null;
     }
+}
+
+const ListItemStart = struct {
+    marker: Block.Data.ListMarker,
+    number: u30,
+    rest: []const u8,
+};
+
+fn startListItem(unindented_line: []const u8) ?ListItemStart {
+    if (mem.startsWith(u8, unindented_line, "- ") or mem.startsWith(u8, unindented_line, "-\t")) {
+        return .{
+            .marker = .@"-",
+            .number = undefined,
+            .rest = unindented_line[2..],
+        };
+    } else if (mem.startsWith(u8, unindented_line, "* ") or mem.startsWith(u8, unindented_line, "*\t")) {
+        return .{
+            .marker = .@"*",
+            .number = undefined,
+            .rest = unindented_line[2..],
+        };
+    }
+
+    const number_end = mem.indexOfNone(u8, unindented_line, "0123456789") orelse return null;
+    const after_number = unindented_line[number_end..];
+    if (!mem.startsWith(u8, after_number, ". ") and !mem.startsWith(u8, after_number, ".\t")) {
+        return null;
+    }
+    const number = std.fmt.parseInt(u30, unindented_line[0..number_end], 10) catch return null;
+    return .{
+        .marker = .number,
+        .number = number,
+        .rest = after_number[2..],
+    };
 }
 
 const HeadingStart = struct {
@@ -339,6 +489,31 @@ fn isThematicBreak(line: []const u8) bool {
 fn closeLastBlock(p: *Parser) !void {
     const b = p.pending_blocks.pop();
     const node = switch (b.tag) {
+        .list => list: {
+            assert(b.string_start == p.scratch_string.items.len);
+            const children = try p.addExtraChildren(@ptrCast(p.scratch_extra.items[b.extra_start..]));
+            break :list try p.addNode(.{
+                .tag = .list,
+                .data = .{ .list = .{
+                    .info = .{
+                        .tight = b.data.list.tight,
+                        .ordered = b.data.list.marker == .number,
+                        .start = b.data.list.start,
+                    },
+                    .children = children,
+                } },
+            });
+        },
+        .list_item => list_item: {
+            assert(b.string_start == p.scratch_string.items.len);
+            const children = try p.addExtraChildren(@ptrCast(p.scratch_extra.items[b.extra_start..]));
+            break :list_item try p.addNode(.{
+                .tag = .list_item,
+                .data = .{ .container = .{
+                    .children = children,
+                } },
+            });
+        },
         .heading => heading: {
             try p.parseInlines(p.scratch_string.items[b.string_start..]);
             const children = try p.addExtraChildren(@ptrCast(p.scratch_extra.items[b.extra_start..]));
@@ -427,4 +602,8 @@ fn addScratchStringLine(p: *Parser, line: []const u8) !void {
     try p.scratch_string.ensureUnusedCapacity(p.allocator, line.len + 1);
     p.scratch_string.appendSliceAssumeCapacity(line);
     p.scratch_string.appendAssumeCapacity('\n');
+}
+
+fn isBlank(line: []const u8) bool {
+    return mem.indexOfNone(u8, line, " \t") == null;
 }

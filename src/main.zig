@@ -18,13 +18,22 @@ pub fn main() !void {
         \\# Some code
         \\
         \\```zig
-        \\std.debug.print("Hello, world!", .{});
+        \\const std = @import("std");
         \\
-        \\// End
+        \\pub fn main() void {
+        \\    std.debug.print("Hello, world!\n", .{});
+        \\}
         \\```
         \\
         \\> Quote
         \\> More quote
+        \\
+        \\1. Hi
+        \\2. Hi
+        \\3. Hi
+        \\- Hi
+        \\  Bye
+        \\* Hi
         \\
     ;
 

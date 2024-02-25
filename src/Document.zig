@@ -22,6 +22,10 @@ pub const Node = struct {
         root,
 
         // Blocks
+        /// Data is `list`.
+        list,
+        /// Data is `container`.
+        list_item,
         /// Data is `heading`.
         heading,
         /// Data is `code_block`.
@@ -51,6 +55,15 @@ pub const Node = struct {
         },
         text: struct {
             content: StringIndex,
+        },
+        list: struct {
+            info: packed struct {
+                tight: bool,
+                ordered: bool,
+                /// Between 0 and 999,999,999, inclusive.
+                start: u30,
+            },
+            children: ExtraIndex(Children),
         },
         heading: struct {
             /// Between 1 and 6, inclusive.
@@ -101,6 +114,28 @@ fn renderNode(doc: Document, node: Node.Index, writer: anytype, tight_paragraphs
                 try doc.renderNode(child, writer, false);
             }
         },
+        .list => {
+            if (data.list.info.ordered) {
+                try writer.print("<ol start=\"{}\">\n", .{data.list.info.start});
+            } else {
+                try writer.writeAll("<ul>\n");
+            }
+            for (doc.extraChildren(data.list.children)) |child| {
+                try doc.renderNode(child, writer, data.list.info.tight);
+            }
+            if (data.list.info.ordered) {
+                try writer.writeAll("</ol>\n");
+            } else {
+                try writer.writeAll("</ul>\n");
+            }
+        },
+        .list_item => {
+            try writer.writeAll("<li>");
+            for (doc.extraChildren(data.container.children)) |child| {
+                try doc.renderNode(child, writer, tight_paragraphs);
+            }
+            try writer.writeAll("</li>\n");
+        },
         .heading => {
             try writer.print("<h{}>", .{data.heading.level});
             for (doc.extraChildren(data.heading.children)) |child| {
@@ -115,7 +150,7 @@ fn renderNode(doc: Document, node: Node.Index, writer: anytype, tight_paragraphs
             try writer.print("<pre><code class=\"{q}\">{}</code></pre>\n", .{ fmtHtml(tag), fmtHtml(content) });
         },
         .blockquote => {
-            try writer.writeAll("<blockquote>");
+            try writer.writeAll("<blockquote>\n");
             for (doc.extraChildren(data.container.children)) |child| {
                 try doc.renderNode(child, writer, tight_paragraphs);
             }
