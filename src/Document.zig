@@ -116,7 +116,11 @@ fn renderNode(doc: Document, node: Node.Index, writer: anytype, tight_paragraphs
         },
         .list => {
             if (data.list.info.ordered) {
-                try writer.print("<ol start=\"{}\">\n", .{data.list.info.start});
+                if (data.list.info.start == 1) {
+                    try writer.writeAll("<ol>\n");
+                } else {
+                    try writer.print("<ol start=\"{}\">\n", .{data.list.info.start});
+                }
             } else {
                 try writer.writeAll("<ul>\n");
             }
@@ -144,10 +148,13 @@ fn renderNode(doc: Document, node: Node.Index, writer: anytype, tight_paragraphs
             try writer.print("</h{}>\n", .{data.heading.level});
         },
         .code_block => {
-            // TODO: correct code tag handling
             const tag = doc.string(data.code_block.tag);
             const content = doc.string(data.code_block.content);
-            try writer.print("<pre><code class=\"{q}\">{}</code></pre>\n", .{ fmtHtml(tag), fmtHtml(content) });
+            if (tag.len > 0) {
+                try writer.print("<pre><code class=\"{q}\">{}</code></pre>\n", .{ fmtHtml(tag), fmtHtml(content) });
+            } else {
+                try writer.print("<pre><code>{}</code></pre>\n", .{fmtHtml(content)});
+            }
         },
         .blockquote => {
             try writer.writeAll("<blockquote>\n");

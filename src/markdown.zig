@@ -1,0 +1,357 @@
+const std = @import("std");
+const testing = std.testing;
+const Document = @import("Document.zig");
+const Parser = @import("Parser.zig");
+
+pub fn main() !void {
+    var gpa_state: std.heap.GeneralPurposeAllocator(.{}) = .{};
+    defer _ = gpa_state.deinit();
+    const gpa = gpa_state.allocator();
+
+    const input =
+        \\Hello, world!
+        \\
+        \\Another paragraph. *Emphasis.* **Strong.** ***Strong emphasis.***
+        \\Nested _emphasis *more*_. Nesting _break *here_*.
+        \\
+        \\---
+        \\lol
+        \\
+        \\# Some code
+        \\
+        \\```zig
+        \\const std = @import("std");
+        \\
+        \\pub fn main() void {
+        \\    std.debug.print("Hello, world!\n", .{});
+        \\}
+        \\```
+        \\
+        \\> Quote
+        \\> More quote
+        \\
+        \\1. Hi
+        \\2. Hi
+        \\3. Hi
+        \\- Hi
+        \\  Bye
+        \\* Hi
+        \\
+    ;
+
+    var parser = try Parser.init(gpa);
+    defer parser.deinit();
+
+    var lines = std.mem.split(u8, input, "\n");
+    while (lines.next()) |line| {
+        try parser.feedLine(line);
+    }
+    var doc = try parser.endInput();
+    defer doc.deinit(gpa);
+
+    var stdout_buf = std.io.bufferedWriter(std.io.getStdOut().writer());
+    try doc.render(stdout_buf.writer());
+    try stdout_buf.flush();
+}
+
+test "unordered lists" {
+    try testRender(
+        \\- Spam
+        \\- Spam
+        \\- Spam
+        \\- Eggs
+        \\- Bacon
+        \\- Spam
+        \\
+    ,
+        \\<ul>
+        \\<li>Spam</li>
+        \\<li>Spam</li>
+        \\<li>Spam</li>
+        \\<li>Eggs</li>
+        \\<li>Bacon</li>
+        \\<li>Spam</li>
+        \\</ul>
+        \\
+    );
+    try testRender(
+        \\* Spam
+        \\* Spam
+        \\* Spam
+        \\* Eggs
+        \\* Bacon
+        \\* Spam
+        \\
+    ,
+        \\<ul>
+        \\<li>Spam</li>
+        \\<li>Spam</li>
+        \\<li>Spam</li>
+        \\<li>Eggs</li>
+        \\<li>Bacon</li>
+        \\<li>Spam</li>
+        \\</ul>
+        \\
+    );
+}
+
+test "ordered lists" {
+    try testRender(
+        \\1. Breakfast
+        \\2. Second breakfast
+        \\3. Lunch
+        \\2. Afternoon snack
+        \\1. Dinner
+        \\6. Dessert
+        \\7. Midnight snack
+        \\
+    ,
+        \\<ol>
+        \\<li>Breakfast</li>
+        \\<li>Second breakfast</li>
+        \\<li>Lunch</li>
+        \\<li>Afternoon snack</li>
+        \\<li>Dinner</li>
+        \\<li>Dessert</li>
+        \\<li>Midnight snack</li>
+        \\</ol>
+        \\
+    );
+    try testRender(
+        \\1001. Breakfast
+        \\2. Second breakfast
+        \\3. Lunch
+        \\2. Afternoon snack
+        \\1. Dinner
+        \\6. Dessert
+        \\7. Midnight snack
+        \\
+    ,
+        \\<ol start="1001">
+        \\<li>Breakfast</li>
+        \\<li>Second breakfast</li>
+        \\<li>Lunch</li>
+        \\<li>Afternoon snack</li>
+        \\<li>Dinner</li>
+        \\<li>Dessert</li>
+        \\<li>Midnight snack</li>
+        \\</ol>
+        \\
+    );
+}
+
+test "headings" {
+    try testRender(
+        \\# Level one
+        \\## Level two
+        \\### Level three
+        \\#### Level four
+        \\##### Level five
+        \\###### Level six
+        \\####### Not a heading
+        \\
+    ,
+        \\<h1>Level one</h1>
+        \\<h2>Level two</h2>
+        \\<h3>Level three</h3>
+        \\<h4>Level four</h4>
+        \\<h5>Level five</h5>
+        \\<h6>Level six</h6>
+        \\<p>####### Not a heading</p>
+        \\
+    );
+}
+
+test "code blocks" {
+    try testRender(
+        \\```
+        \\Hello, world!
+        \\This is some code.
+        \\```
+        \\``` zig test
+        \\const std = @import("std");
+        \\
+        \\test {
+        \\    try std.testing.expect(2 + 2 == 4);
+        \\}
+        \\```
+        \\
+    ,
+        \\<pre><code>Hello, world!
+        \\This is some code.
+        \\</code></pre>
+        \\<pre><code class="zig test">const std = @import("std");
+        \\
+        \\test {
+        \\    try std.testing.expect(2 + 2 == 4);
+        \\}
+        \\</code></pre>
+        \\
+    );
+}
+
+test "blockquotes" {
+    try testRender(
+        \\> > You miss 100% of the shots you don't take.
+        \\> >
+        \\> > ~ Wayne Gretzky
+        \\>
+        \\> ~ Michael Scott
+        \\
+    ,
+        \\<blockquote>
+        \\<blockquote>
+        \\<p>You miss 100% of the shots you don't take.</p>
+        \\<p>~ Wayne Gretzky</p>
+        \\</blockquote>
+        \\<p>~ Michael Scott</p>
+        \\</blockquote>
+        \\
+    );
+}
+
+test "paragraphs" {
+    try testRender(
+        \\Paragraph one.
+        \\
+        \\Paragraph two.
+        \\Still in the paragraph.
+        \\    So is this.
+        \\
+        \\
+        \\
+        \\
+        \\ Last paragraph.
+        \\
+    ,
+        \\<p>Paragraph one.</p>
+        \\<p>Paragraph two.
+        \\Still in the paragraph.
+        \\So is this.</p>
+        \\<p>Last paragraph.</p>
+        \\
+    );
+}
+
+test "thematic breaks" {
+    try testRender(
+        \\---
+        \\***
+        \\___
+        \\          ---
+        \\ - - - - - - - - - - -
+        \\
+    ,
+        \\<hr />
+        \\<hr />
+        \\<hr />
+        \\<hr />
+        \\<hr />
+        \\
+    );
+}
+
+test "emphasis" {
+    try testRender(
+        \\*Emphasis.*
+        \\**Strong.**
+        \\***Strong emphasis.***
+        \\****More...****
+        \\*****MORE...*****
+        \\******Even more...******
+        \\*******OK, this is enough.*******
+        \\
+    ,
+        \\<p><em>Emphasis.</em>
+        \\<strong>Strong.</strong>
+        \\<em><strong>Strong emphasis.</strong></em>
+        \\<em><strong><em>More...</em></strong></em>
+        \\<em><strong><strong>MORE...</strong></strong></em>
+        \\<em><strong><em><strong>Even more...</strong></em></strong></em>
+        \\<em><strong><em><strong><em>OK, this is enough.</em></strong></em></strong></em></p>
+        \\
+    );
+    try testRender(
+        \\_Emphasis._
+        \\__Strong.__
+        \\___Strong emphasis.___
+        \\____More...____
+        \\_____MORE..._____
+        \\______Even more...______
+        \\_______OK, this is enough._______
+        \\
+    ,
+        \\<p><em>Emphasis.</em>
+        \\<strong>Strong.</strong>
+        \\<em><strong>Strong emphasis.</strong></em>
+        \\<em><strong><em>More...</em></strong></em>
+        \\<em><strong><strong>MORE...</strong></strong></em>
+        \\<em><strong><em><strong>Even more...</strong></em></strong></em>
+        \\<em><strong><em><strong><em>OK, this is enough.</em></strong></em></strong></em></p>
+        \\
+    );
+}
+
+test "nested emphasis" {
+    try testRender(
+        \\**Hello, *world!***
+        \\*Hello, **world!***
+        \\**Hello, _world!_**
+        \\_Hello, **world!**_
+        \\*Hello, **nested** *world!**
+        \\
+    ,
+        \\<p><strong>Hello, <em>world!</em></strong>
+        \\<em>Hello, <strong>world!</strong></em>
+        \\<strong>Hello, <em>world!</em></strong>
+        \\<em>Hello, <strong>world!</strong></em>
+        \\<em>Hello, <strong>nested</strong> <em>world!</em></em></p>
+        \\
+    );
+}
+
+test "emphasis precedence" {
+    try testRender(
+        \\*First one _wins*_.
+        \\_*No other __rule matters.*_
+        \\
+    ,
+        \\<p><em>First one _wins</em>_.
+        \\<em><em>No other __rule matters.</em></em></p>
+        \\
+    );
+}
+
+test "emphasis open and close" {
+    try testRender(
+        \\Cannot open: *
+        \\Cannot open: _
+        \\*Cannot close: *
+        \\_Cannot close: _
+        \\
+    ,
+        \\<p>Cannot open: *
+        \\Cannot open: _
+        \\*Cannot close: *
+        \\_Cannot close: _</p>
+        \\
+    );
+}
+
+fn testRender(input: []const u8, expected: []const u8) !void {
+    var parser = try Parser.init(testing.allocator);
+    defer parser.deinit();
+
+    var lines = std.mem.split(u8, input, "\n");
+    while (lines.next()) |line| {
+        try parser.feedLine(line);
+    }
+    var doc = try parser.endInput();
+    defer doc.deinit(testing.allocator);
+
+    var actual = std.ArrayList(u8).init(testing.allocator);
+    defer actual.deinit();
+    try doc.render(actual.writer());
+
+    try testing.expectEqualStrings(expected, actual.items);
+}

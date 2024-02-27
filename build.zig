@@ -8,7 +8,7 @@ pub fn build(b: *std.Build) void {
         .name = "zig-markdown",
         .target = target,
         .optimize = optimize,
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = .{ .path = "src/markdown.zig" },
     });
     b.installArtifact(exe);
 
@@ -17,4 +17,13 @@ pub fn build(b: *std.Build) void {
         run.addArgs(args);
     }
     b.step("run", "Run the executable").dependOn(&run.step);
+
+    const tests = b.addTest(.{
+        .target = target,
+        .optimize = optimize,
+        .root_source_file = .{ .path = "src/markdown.zig" },
+    });
+    tests.filters = b.option([]const []const u8, "test-filter", "Test filter") orelse &.{};
+    const run_tests = b.addRunArtifact(tests);
+    b.step("test", "Run tests").dependOn(&run_tests.step);
 }
