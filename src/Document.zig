@@ -46,6 +46,8 @@ pub const Node = struct {
         code_span,
         /// Data is `text`.
         text,
+        /// Data is `none`.
+        line_break,
     };
 
     pub const Data = union {
@@ -198,6 +200,9 @@ fn renderNode(doc: Document, node: Node.Index, writer: anytype, tight_paragraphs
         .text => {
             const content = doc.string(data.text.content);
             try writer.print("{}", .{fmtHtml(content)});
+        },
+        .line_break => {
+            try writer.writeAll("<br />\n");
         },
     }
 }

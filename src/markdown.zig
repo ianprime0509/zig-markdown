@@ -408,6 +408,20 @@ test "backslash escapes" {
     );
 }
 
+test "hard line breaks" {
+    try testRender(
+        \\The iguana sits\
+        \\Perched atop a short desk chair\
+        \\Writing code in Zig
+        \\
+    ,
+        \\<p>The iguana sits<br />
+        \\Perched atop a short desk chair<br />
+        \\Writing code in Zig</p>
+        \\
+    );
+}
+
 test "Unicode handling" {
     // Null bytes must be replaced.
     try testRender("\x00\x00\x00", "<p>\u{FFFD}\u{FFFD}\u{FFFD}</p>\n");

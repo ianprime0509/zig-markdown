@@ -571,7 +571,7 @@ fn closeLastBlock(p: *Parser) !void {
     };
     p.scratch_string.items.len = b.string_start;
     p.scratch_extra.items.len = b.extra_start;
-    try p.scratch_extra.append(p.allocator, @intFromEnum(node));
+    try p.addScratchExtraNode(node);
 }
 
 const InlineParser = struct {
@@ -802,41 +802,45 @@ const InlineParser = struct {
         const scratch_extra_top = ip.parent.scratch_extra.items.len;
         defer ip.parent.scratch_extra.shrinkRetainingCapacity(scratch_extra_top);
 
-        var last_start = end;
-        while (ip.completed_inlines.items.len > 0 and ip.completed_inlines.getLast().start >= start) {
-            const child_inline = ip.completed_inlines.pop();
-            const child_end = child_inline.start + child_inline.len;
+        var child_index = ip.completed_inlines.items.len;
+        while (child_index > 0 and ip.completed_inlines.items[child_index - 1].start >= start) {
+            child_index -= 1;
+        }
+        const start_child_index = child_index;
+
+        var pos = start;
+        while (child_index < ip.completed_inlines.items.len) : (child_index += 1) {
+            const child_inline = ip.completed_inlines.items[child_index];
             // Completed inlines must be strictly nested within the encodable
             // content.
-            assert(child_end <= last_start);
+            assert(child_inline.start >= pos and child_inline.start + child_inline.len <= end);
 
-            if (child_end < last_start) {
-                const textNode = try ip.encodeTextNode(child_end, last_start);
-                try ip.parent.scratch_extra.append(ip.parent.allocator, @intFromEnum(textNode));
+            if (child_inline.start > pos) {
+                try ip.encodeTextNode(pos, child_inline.start);
             }
-            try ip.parent.scratch_extra.append(ip.parent.allocator, @intFromEnum(child_inline.node));
+            try ip.parent.addScratchExtraNode(child_inline.node);
 
-            last_start = child_inline.start;
+            pos = child_inline.start + child_inline.len;
         }
+        ip.completed_inlines.shrinkRetainingCapacity(start_child_index);
 
-        if (start < last_start) {
-            const textNode = try ip.encodeTextNode(start, last_start);
-            try ip.parent.scratch_extra.append(ip.parent.allocator, @intFromEnum(textNode));
+        if (pos < end) {
+            try ip.encodeTextNode(pos, end);
         }
 
         const children = ip.parent.scratch_extra.items[scratch_extra_top..];
-        // The children have been added to scratch_extra in reverse order.
-        mem.reverse(u32, children);
         return try ip.parent.addExtraChildren(@ptrCast(children));
     }
 
-    fn encodeTextNode(ip: *InlineParser, start: usize, end: usize) !Node.Index {
+    /// Encodes textual content `ip.content[start..end]` to `scratch_extra`.
+    fn encodeTextNode(ip: *InlineParser, start: usize, end: usize) !void {
         // For efficiency, we can encode directly into string_bytes rather than
         // creating a temporary string and then encoding it, since this process
         // is entirely linear.
         const string_top = ip.parent.string_bytes.items.len;
         errdefer ip.parent.string_bytes.shrinkRetainingCapacity(string_top);
 
+        var string_start = string_top;
         const to_encode = ip.content[start..end];
         var pos: usize = 0;
         while (pos < to_encode.len) {
@@ -848,7 +852,22 @@ const InlineParser = struct {
                 '\\' => {
                     if (pos + 1 == to_encode.len) break;
                     switch (to_encode[pos + 1]) {
-                        '\n' => try ip.parent.string_bytes.append(ip.parent.allocator, '\n'), // TODO: hard line breaks
+                        '\n' => {
+                            if (ip.parent.string_bytes.items.len > string_start) {
+                                try ip.parent.string_bytes.append(ip.parent.allocator, 0);
+                                try ip.parent.addScratchExtraNode(try ip.parent.addNode(.{
+                                    .tag = .text,
+                                    .data = .{ .text = .{
+                                        .content = @enumFromInt(string_start),
+                                    } },
+                                }));
+                                string_start = ip.parent.string_bytes.items.len;
+                            }
+                            try ip.parent.addScratchExtraNode(try ip.parent.addNode(.{
+                                .tag = .line_break,
+                                .data = .{ .none = {} },
+                            }));
+                        },
                         else => |c| try ip.parent.string_bytes.append(ip.parent.allocator, c),
                     }
                     pos += 2;
@@ -874,14 +893,16 @@ const InlineParser = struct {
                 },
             }
         }
-        try ip.parent.string_bytes.append(ip.parent.allocator, 0);
 
-        return try ip.parent.addNode(.{
-            .tag = .text,
-            .data = .{ .text = .{
-                .content = @enumFromInt(string_top),
-            } },
-        });
+        if (ip.parent.string_bytes.items.len > string_start) {
+            try ip.parent.string_bytes.append(ip.parent.allocator, 0);
+            try ip.parent.addScratchExtraNode(try ip.parent.addNode(.{
+                .tag = .text,
+                .data = .{ .text = .{
+                    .content = @enumFromInt(string_start),
+                } },
+            }));
+        }
     }
 };
 
@@ -916,6 +937,10 @@ fn addExtraChildren(p: *Parser, nodes: []const Node.Index) !ExtraIndex(Node.Chil
     p.extra.appendAssumeCapacity(@intCast(nodes.len));
     p.extra.appendSliceAssumeCapacity(@ptrCast(nodes));
     return index;
+}
+
+fn addScratchExtraNode(p: *Parser, node: Node.Index) !void {
+    try p.scratch_extra.append(p.allocator, @intFromEnum(node));
 }
 
 fn addScratchStringLine(p: *Parser, line: []const u8) !void {
