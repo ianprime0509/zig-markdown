@@ -357,6 +357,33 @@ test "emphasis open and close" {
     );
 }
 
+test "code spans" {
+    try testRender(
+        \\`Hello, world!`
+        \\```Multiple `backticks` can be used.```
+        \\`**This** does not produce emphasis.`
+        \\`` `Backtick enclosed string.` ``
+        \\`Delimiter lengths ```must``` match.`
+        \\
+        \\Unterminated ``code...
+        \\
+        \\Weird empty code span: `
+        \\
+        \\**Very important code: `hi`**
+        \\
+    ,
+        \\<p><code>Hello, world!</code>
+        \\<code>Multiple `backticks` can be used.</code>
+        \\<code>**This** does not produce emphasis.</code>
+        \\<code>`Backtick enclosed string.`</code>
+        \\<code>Delimiter lengths ```must``` match.</code></p>
+        \\<p>Unterminated <code>code...</code></p>
+        \\<p>Weird empty code span: <code></code></p>
+        \\<p><strong>Very important code: <code>hi</code></strong></p>
+        \\
+    );
+}
+
 fn testRender(input: []const u8, expected: []const u8) !void {
     var parser = try Parser.init(testing.allocator);
     defer parser.deinit();

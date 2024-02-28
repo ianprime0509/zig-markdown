@@ -594,7 +594,7 @@ const InlineParser = struct {
         const Data = union {
             emphasis: struct {
                 underscore: bool,
-                delim_len: usize,
+                run_len: usize,
             },
         };
     };
@@ -610,18 +610,29 @@ const InlineParser = struct {
         ip.completed_inlines.deinit(ip.parent.allocator);
     }
 
+    /// Parses all of `ip.content`, returning the children of the node
+    /// containing the inline content.
     fn parse(ip: *InlineParser) !ExtraIndex(Node.Children) {
         while (ip.pos < ip.content.len) : (ip.pos += 1) {
             switch (ip.content[ip.pos]) {
                 '\\' => ip.pos += 1,
                 '*', '_' => try ip.parseEmphasis(),
+                '`' => try ip.parseCodeSpan(),
                 else => {},
             }
         }
 
-        return try ip.encodeChildren(0, ip.content.len);
+        const children = try ip.encodeChildren(0, ip.content.len);
+        // There may be pending inlines after parsing (e.g. unclosed emphasis
+        // runs), but there must not be any completed inlines, since those
+        // should all be part of `children`.
+        assert(ip.completed_inlines.items.len == 0);
+        return children;
     }
 
+    /// Parses emphasis, starting at the beginning of a run of `*` or `_`
+    /// characters. `ip.pos` is left at the last character in the run after
+    /// parsing.
     fn parseEmphasis(ip: *InlineParser) !void {
         const char = ip.content[ip.pos];
         var start = ip.pos;
@@ -643,8 +654,8 @@ const InlineParser = struct {
                 if (opener.tag == .emphasis and
                     opener.data.emphasis.underscore == underscore)
                 {
-                    const close_len = @min(opener.data.emphasis.delim_len, len);
-                    const opener_end = opener.start + opener.data.emphasis.delim_len;
+                    const close_len = @min(opener.data.emphasis.run_len, len);
+                    const opener_end = opener.start + opener.data.emphasis.run_len;
 
                     const emphasis = try ip.encodeEmphasis(opener_end, start, close_len);
                     const emphasis_start = opener_end - close_len;
@@ -656,8 +667,8 @@ const InlineParser = struct {
                     });
 
                     // There may still be other openers further down in the
-                    // stack to close, or part of this delimiter run might serve
-                    // as an opener itself.
+                    // stack to close, or part of this run might serve as an
+                    // opener itself.
                     start += close_len;
                     len -= close_len;
 
@@ -665,8 +676,8 @@ const InlineParser = struct {
                     // closing this emphasis will prevent them from being closed.
                     // Additionally, if this opener is completely consumed by
                     // being closed, it can be removed.
-                    opener.data.emphasis.delim_len -= close_len;
-                    if (opener.data.emphasis.delim_len == 0) {
+                    opener.data.emphasis.run_len -= close_len;
+                    if (opener.data.emphasis.run_len == 0) {
                         ip.pending_inlines.shrinkRetainingCapacity(i);
                     } else {
                         ip.pending_inlines.shrinkRetainingCapacity(i + 1);
@@ -680,16 +691,19 @@ const InlineParser = struct {
                 .tag = .emphasis,
                 .data = .{ .emphasis = .{
                     .underscore = underscore,
-                    .delim_len = len,
+                    .run_len = len,
                 } },
                 .start = start,
             });
         }
     }
 
-    fn encodeEmphasis(ip: *InlineParser, start: usize, end: usize, delim_len: usize) !Node.Index {
+    /// Encodes emphasis specified by a run of `run_len` emphasis characters,
+    /// with `start..end` being the range of content contained within the
+    /// emphasis.
+    fn encodeEmphasis(ip: *InlineParser, start: usize, end: usize, run_len: usize) !Node.Index {
         const children = try ip.encodeChildren(start, end);
-        var inner = switch (delim_len % 3) {
+        var inner = switch (run_len % 3) {
             1 => try ip.parent.addNode(.{
                 .tag = .emphasis,
                 .data = .{ .container = .{
@@ -719,8 +733,8 @@ const InlineParser = struct {
             else => unreachable,
         };
 
-        var delim_left = delim_len;
-        while (delim_left > 3) : (delim_left -= 3) {
+        var run_left = run_len;
+        while (run_left > 3) : (run_left -= 3) {
             const strong = try ip.parent.addNode(.{
                 .tag = .strong,
                 .data = .{ .container = .{
@@ -738,6 +752,52 @@ const InlineParser = struct {
         return inner;
     }
 
+    /// Parses a code span, starting at the beginning of the opening backtick
+    /// run. `ip.pos` is left at the last character in the closing run after
+    /// parsing.
+    fn parseCodeSpan(ip: *InlineParser) !void {
+        const opener_start = ip.pos;
+        ip.pos = mem.indexOfNonePos(u8, ip.content, ip.pos, "`") orelse ip.content.len;
+        const opener_len = ip.pos - opener_start;
+
+        const start = ip.pos;
+        const end = while (mem.indexOfScalarPos(u8, ip.content, ip.pos, '`')) |closer_start| {
+            ip.pos = mem.indexOfNonePos(u8, ip.content, closer_start, "`") orelse ip.content.len;
+            const closer_len = ip.pos - closer_start;
+
+            if (closer_len == opener_len) break closer_start;
+        } else unterminated: {
+            ip.pos = ip.content.len;
+            break :unterminated ip.content.len;
+        };
+
+        var content = if (start < ip.content.len)
+            ip.content[start..end]
+        else
+            "";
+        // This single space removal rule allows code spans to be written which
+        // start or end with backticks.
+        if (mem.startsWith(u8, content, " `")) content = content[1..];
+        if (mem.endsWith(u8, content, "` ")) content = content[0 .. content.len - 1];
+
+        const text = try ip.parent.addNode(.{
+            .tag = .code_span,
+            .data = .{ .text = .{
+                .content = try ip.parent.addString(content),
+            } },
+        });
+        try ip.completed_inlines.append(ip.parent.allocator, .{
+            .node = text,
+            .start = opener_start,
+            .len = ip.pos - opener_start,
+        });
+        // Ensure ip.pos is pointing at the last character of the
+        // closer, not after it.
+        ip.pos -= 1;
+    }
+
+    /// Encodes children parsed in the content range `start..end`. The children
+    /// will be text nodes and any completed inlines within the range.
     fn encodeChildren(ip: *InlineParser, start: usize, end: usize) !ExtraIndex(Node.Children) {
         const scratch_extra_top = ip.parent.scratch_extra.items.len;
         defer ip.parent.scratch_extra.shrinkRetainingCapacity(scratch_extra_top);
@@ -798,6 +858,8 @@ fn addNode(p: *Parser, node: Node) !Node.Index {
 }
 
 fn addString(p: *Parser, s: []const u8) !StringIndex {
+    if (s.len == 0) return .empty;
+
     const index: StringIndex = @enumFromInt(@as(u32, @intCast(p.string_bytes.items.len)));
     try p.string_bytes.ensureUnusedCapacity(p.allocator, s.len + 1);
     p.string_bytes.appendSliceAssumeCapacity(s);
