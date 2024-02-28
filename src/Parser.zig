@@ -1,3 +1,23 @@
+//! A Markdown parser producing `Document`s.
+//!
+//! The parser operates at two levels: at the outer level, the parser accepts
+//! the content of an input document line by line and begins building the _block
+//! structure_ of the document. This creates a stack of currently open blocks.
+//!
+//! When the parser detects the end of a block, it closes the block, popping it
+//! from the open block stack and completing any additional parsing of the
+//! block's content. For blocks which contain parseable inline content, this
+//! invokes the inner level of the parser, handling the _inline structure_ of
+//! the block.
+//!
+//! Inline parsing scans through the collected inline content of a block. When
+//! it encounters a character that could indicate the beginning of an inline, it
+//! either handles the inline right away (if possible) or adds it to a pending
+//! inlines stack. When an inline is completed, it is added to a list of
+//! completed inlines, which (along with any surrounding text nodes) will become
+//! the children of the parent inline or the block whose inline content is being
+//! parsed.
+
 const std = @import("std");
 const mem = std.mem;
 const assert = std.debug.assert;
@@ -17,6 +37,7 @@ allocator: Allocator,
 
 const Parser = @This();
 
+/// A block element which is still receiving children.
 const Block = struct {
     tag: Tag,
     data: Data,
@@ -90,6 +111,10 @@ const Block = struct {
         };
     }
 
+    /// Attempts to continue `b` using the contents of `line`. If successful,
+    /// returns the remaining portion of `line` to be considered part of `b`
+    /// (e.g. for a blockquote, this would be everything except the leading
+    /// `>`). If unsuccessful, returns null.
     fn match(b: Block, line: []const u8) ?[]const u8 {
         const unindented = mem.trimLeft(u8, line, " \t");
         const indent = line.len - unindented.len;
@@ -139,6 +164,8 @@ pub fn deinit(p: *Parser) void {
     p.* = undefined;
 }
 
+/// Accepts a single line of content. `line` should not have a trailing line
+/// ending character.
 pub fn feedLine(p: *Parser, line: []const u8) Allocator.Error!void {
     var rest_line = line;
     const first_unmatched = for (p.pending_blocks.items, 0..) |b, i| {
@@ -222,6 +249,7 @@ pub fn feedLine(p: *Parser, line: []const u8) Allocator.Error!void {
     }
 }
 
+/// Completes processing of the input and returns the parsed document.
 pub fn endInput(p: *Parser) Allocator.Error!Document {
     while (p.pending_blocks.items.len > 0) {
         try p.closeLastBlock();
@@ -249,6 +277,7 @@ pub fn endInput(p: *Parser) Allocator.Error!Document {
     };
 }
 
+/// Data describing the start of a new block element.
 const BlockStart = struct {
     tag: Tag,
     data: Data,

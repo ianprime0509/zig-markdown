@@ -54,6 +54,12 @@ pub fn main() !void {
     try stdout_buf.flush();
 }
 
+test "empty document" {
+    try testRender("", "");
+    try testRender("   ", "");
+    try testRender("\n \n\t\n   \n", "");
+}
+
 test "unordered lists" {
     try testRender(
         \\- Spam
@@ -158,6 +164,20 @@ test "headings" {
         \\<h5>Level five</h5>
         \\<h6>Level six</h6>
         \\<p>####### Not a heading</p>
+        \\
+    );
+}
+
+test "headings with inline content" {
+    try testRender(
+        \\# Outline of `std.zig`
+        \\## **Important** notes
+        \\### ***Nested* inline content**
+        \\
+    ,
+        \\<h1>Outline of <code>std.zig</code></h1>
+        \\<h2><strong>Important</strong> notes</h2>
+        \\<h3><strong><em>Nested</em> inline content</strong></h3>
         \\
     );
 }

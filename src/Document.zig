@@ -1,3 +1,5 @@
+//! An abstract tree representation of a Markdown document.
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
