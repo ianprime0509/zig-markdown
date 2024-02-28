@@ -230,6 +230,34 @@ test "blockquotes" {
     );
 }
 
+test "blockquote lazy continuation lines" {
+    try testRender(
+        \\>>>>Deeply nested blockquote
+        \\>>which continues on another line
+        \\and then yet another one.
+        \\>>
+        \\>> But now two of them have been closed.
+        \\
+        \\And then there were none.
+        \\
+    ,
+        \\<blockquote>
+        \\<blockquote>
+        \\<blockquote>
+        \\<blockquote>
+        \\<p>Deeply nested blockquote
+        \\which continues on another line
+        \\and then yet another one.</p>
+        \\</blockquote>
+        \\</blockquote>
+        \\<p>But now two of them have been closed.</p>
+        \\</blockquote>
+        \\</blockquote>
+        \\<p>And then there were none.</p>
+        \\
+    );
+}
+
 test "paragraphs" {
     try testRender(
         \\Paragraph one.

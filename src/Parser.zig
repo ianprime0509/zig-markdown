@@ -427,13 +427,13 @@ const ListItemStart = struct {
 };
 
 fn startListItem(unindented_line: []const u8) ?ListItemStart {
-    if (mem.startsWith(u8, unindented_line, "- ") or mem.startsWith(u8, unindented_line, "-\t")) {
+    if (mem.startsWith(u8, unindented_line, "- ")) {
         return .{
             .marker = .@"-",
             .number = undefined,
             .rest = unindented_line[2..],
         };
-    } else if (mem.startsWith(u8, unindented_line, "* ") or mem.startsWith(u8, unindented_line, "*\t")) {
+    } else if (mem.startsWith(u8, unindented_line, "* ")) {
         return .{
             .marker = .@"*",
             .number = undefined,
@@ -443,7 +443,7 @@ fn startListItem(unindented_line: []const u8) ?ListItemStart {
 
     const number_end = mem.indexOfNone(u8, unindented_line, "0123456789") orelse return null;
     const after_number = unindented_line[number_end..];
-    if (!mem.startsWith(u8, after_number, ". ") and !mem.startsWith(u8, after_number, ".\t")) {
+    if (!mem.startsWith(u8, after_number, ". ")) {
         return null;
     }
     const number = std.fmt.parseInt(u30, unindented_line[0..number_end], 10) catch return null;
@@ -468,7 +468,7 @@ fn startHeading(unindented_line: []const u8) ?HeadingStart {
                 if (level == 6) break null;
                 level += 1;
             },
-            ' ', '\t' => {
+            ' ' => {
                 // We must have seen at least one # by this point, since
                 // unindented_line has no leading spaces.
                 assert(level > 0);
@@ -495,16 +495,18 @@ fn startCodeBlock(p: *Parser, unindented_line: []const u8) !?CodeBlockStart {
             else => break unindented_line[i..],
         }
     } else "";
+    // Code block tags may not contain backticks, since that would create
+    // potential confusion with inline code spans.
     if (fence_len < 3 or mem.indexOfScalar(u8, tag_bytes, '`') != null) return null;
     return .{
-        .tag = try p.addString(mem.trim(u8, tag_bytes, " \t")),
+        .tag = try p.addString(mem.trim(u8, tag_bytes, " ")),
         .fence_len = fence_len,
     };
 }
 
 fn startBlockquote(unindented_line: []const u8) ?[]const u8 {
-    return if (mem.startsWith(u8, unindented_line, "> ") or mem.startsWith(u8, unindented_line, ">\t"))
-        unindented_line[2..]
+    return if (mem.startsWith(u8, unindented_line, ">"))
+        unindented_line[1..]
     else
         null;
 }
@@ -514,7 +516,7 @@ fn isThematicBreak(line: []const u8) bool {
     var count: usize = 0;
     for (line) |c| {
         switch (c) {
-            ' ', '\t' => {},
+            ' ' => {},
             '-', '_', '*' => {
                 if (char != null and c != char.?) return false;
                 char = c;
