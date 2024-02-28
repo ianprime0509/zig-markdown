@@ -831,12 +831,55 @@ const InlineParser = struct {
     }
 
     fn encodeTextNode(ip: *InlineParser, start: usize, end: usize) !Node.Index {
-        // TODO: backslash escaping, UTF-8 validation, null byte
-        const content = try ip.parent.addString(ip.content[start..end]);
+        // For efficiency, we can encode directly into string_bytes rather than
+        // creating a temporary string and then encoding it, since this process
+        // is entirely linear.
+        const string_top = ip.parent.string_bytes.items.len;
+        errdefer ip.parent.string_bytes.shrinkRetainingCapacity(string_top);
+
+        const to_encode = ip.content[start..end];
+        var pos: usize = 0;
+        while (pos < to_encode.len) {
+            switch (to_encode[pos]) {
+                0 => {
+                    try ip.parent.string_bytes.appendSlice(ip.parent.allocator, "\u{FFFD}");
+                    pos += 1;
+                },
+                '\\' => {
+                    if (pos + 1 == to_encode.len) break;
+                    switch (to_encode[pos + 1]) {
+                        '\n' => try ip.parent.string_bytes.append(ip.parent.allocator, '\n'), // TODO: hard line breaks
+                        else => |c| try ip.parent.string_bytes.append(ip.parent.allocator, c),
+                    }
+                    pos += 2;
+                },
+                1...('\\' - 1), ('\\' + 1)...127 => |c| {
+                    try ip.parent.string_bytes.append(ip.parent.allocator, c);
+                    pos += 1;
+                },
+                else => |b| {
+                    const cp_len = std.unicode.utf8ByteSequenceLength(b) catch {
+                        try ip.parent.string_bytes.appendSlice(ip.parent.allocator, "\u{FFFD}");
+                        pos += 1;
+                        continue;
+                    };
+                    const is_valid = pos + cp_len < to_encode.len and
+                        std.unicode.utf8ValidateSlice(to_encode[pos..][0..cp_len]);
+                    const cp_encoded = if (is_valid)
+                        to_encode[pos..][0..cp_len]
+                    else
+                        "\u{FFFD}";
+                    try ip.parent.string_bytes.appendSlice(ip.parent.allocator, cp_encoded);
+                    pos += cp_len;
+                },
+            }
+        }
+        try ip.parent.string_bytes.append(ip.parent.allocator, 0);
+
         return try ip.parent.addNode(.{
             .tag = .text,
             .data = .{ .text = .{
-                .content = content,
+                .content = @enumFromInt(string_top),
             } },
         });
     }

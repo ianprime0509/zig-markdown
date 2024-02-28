@@ -384,6 +384,42 @@ test "code spans" {
     );
 }
 
+test "backslash escapes" {
+    try testRender(
+        \\Not \*emphasized\*.
+        \\Literal \\backslashes\\.
+        \\Not code: \`hi\`.
+        \\\# Not a title.
+        \\#\# Also not a title.
+        \\\> Not a blockquote.
+        \\\- Not a list item.
+        \\Other \characters can be \escaped\ \too\.
+        \\
+    ,
+        \\<p>Not *emphasized*.
+        \\Literal \backslashes\.
+        \\Not code: `hi`.
+        \\# Not a title.
+        \\## Also not a title.
+        \\> Not a blockquote.
+        \\- Not a list item.
+        \\Other characters can be escaped too.</p>
+        \\
+    );
+}
+
+test "Unicode handling" {
+    // Null bytes must be replaced.
+    try testRender("\x00\x00\x00", "<p>\u{FFFD}\u{FFFD}\u{FFFD}</p>\n");
+
+    // Invalid UTF-8 must be replaced.
+    try testRender("\xC0\x80\xE0\x80\x80\xF0\x80\x80\x80", "<p>\u{FFFD}\u{FFFD}\u{FFFD}</p>\n");
+    try testRender("\xED\xA0\x80\xED\xBF\xBF", "<p>\u{FFFD}\u{FFFD}</p>\n");
+
+    // Incomplete UTF-8 must be replaced.
+    try testRender("\xE2\x82", "<p>\u{FFFD}</p>\n");
+}
+
 fn testRender(input: []const u8, expected: []const u8) !void {
     var parser = try Parser.init(testing.allocator);
     defer parser.deinit();
