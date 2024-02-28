@@ -614,65 +614,77 @@ const InlineParser = struct {
         while (ip.pos < ip.content.len) : (ip.pos += 1) {
             switch (ip.content[ip.pos]) {
                 '\\' => ip.pos += 1,
-                '*', '_' => |c| {
-                    var start = ip.pos;
-                    while (ip.pos + 1 < ip.content.len and ip.content[ip.pos + 1] == c) {
-                        ip.pos += 1;
-                    }
-                    var len = ip.pos - start + 1;
-                    const can_open = start + len < ip.content.len and
-                        !std.ascii.isWhitespace(ip.content[start + len]);
-                    const can_close = start > 0 and
-                        !std.ascii.isWhitespace(ip.content[start - 1]);
-                    const underscore = c == '_';
-
-                    if (can_close and ip.pending_inlines.items.len > 0) {
-                        var i = ip.pending_inlines.items.len;
-                        while (i > 0 and len > 0) {
-                            i -= 1;
-                            const opener = &ip.pending_inlines.items[i];
-                            if (opener.tag == .emphasis and
-                                opener.data.emphasis.underscore == underscore)
-                            {
-                                // Remove any pending inlines above this on the
-                                // stack, since closing this emphasis will
-                                // prevent them from being closed.
-                                ip.pending_inlines.items.len = i;
-                                const opener_data = &opener.data.emphasis;
-                                const close_len = @min(opener_data.delim_len, len);
-                                const opener_end = opener.start + opener_data.delim_len;
-
-                                const emphasis = try ip.encodeEmphasis(opener_end, start, close_len);
-                                const emphasis_start = opener_end - close_len;
-                                const emphasis_len = start - emphasis_start + close_len;
-                                try ip.completed_inlines.append(ip.parent.allocator, .{
-                                    .node = emphasis,
-                                    .start = emphasis_start,
-                                    .len = emphasis_len,
-                                });
-
-                                start += close_len;
-                                len -= close_len;
-                            }
-                        }
-                    }
-
-                    if (can_open and len > 0) {
-                        try ip.pending_inlines.append(ip.parent.allocator, .{
-                            .tag = .emphasis,
-                            .data = .{ .emphasis = .{
-                                .underscore = underscore,
-                                .delim_len = len,
-                            } },
-                            .start = start,
-                        });
-                    }
-                },
+                '*', '_' => try ip.parseEmphasis(),
                 else => {},
             }
         }
 
         return try ip.encodeChildren(0, ip.content.len);
+    }
+
+    fn parseEmphasis(ip: *InlineParser) !void {
+        const char = ip.content[ip.pos];
+        var start = ip.pos;
+        while (ip.pos + 1 < ip.content.len and ip.content[ip.pos + 1] == char) {
+            ip.pos += 1;
+        }
+        var len = ip.pos - start + 1;
+        const can_open = start + len < ip.content.len and
+            !std.ascii.isWhitespace(ip.content[start + len]);
+        const can_close = start > 0 and
+            !std.ascii.isWhitespace(ip.content[start - 1]);
+        const underscore = char == '_';
+
+        if (can_close and ip.pending_inlines.items.len > 0) {
+            var i = ip.pending_inlines.items.len;
+            while (i > 0 and len > 0) {
+                i -= 1;
+                const opener = &ip.pending_inlines.items[i];
+                if (opener.tag == .emphasis and
+                    opener.data.emphasis.underscore == underscore)
+                {
+                    const close_len = @min(opener.data.emphasis.delim_len, len);
+                    const opener_end = opener.start + opener.data.emphasis.delim_len;
+
+                    const emphasis = try ip.encodeEmphasis(opener_end, start, close_len);
+                    const emphasis_start = opener_end - close_len;
+                    const emphasis_len = start - emphasis_start + close_len;
+                    try ip.completed_inlines.append(ip.parent.allocator, .{
+                        .node = emphasis,
+                        .start = emphasis_start,
+                        .len = emphasis_len,
+                    });
+
+                    // There may still be other openers further down in the
+                    // stack to close, or part of this delimiter run might serve
+                    // as an opener itself.
+                    start += close_len;
+                    len -= close_len;
+
+                    // Remove any pending inlines above this on the stack, since
+                    // closing this emphasis will prevent them from being closed.
+                    // Additionally, if this opener is completely consumed by
+                    // being closed, it can be removed.
+                    opener.data.emphasis.delim_len -= close_len;
+                    if (opener.data.emphasis.delim_len == 0) {
+                        ip.pending_inlines.shrinkRetainingCapacity(i);
+                    } else {
+                        ip.pending_inlines.shrinkRetainingCapacity(i + 1);
+                    }
+                }
+            }
+        }
+
+        if (can_open and len > 0) {
+            try ip.pending_inlines.append(ip.parent.allocator, .{
+                .tag = .emphasis,
+                .data = .{ .emphasis = .{
+                    .underscore = underscore,
+                    .delim_len = len,
+                } },
+                .start = start,
+            });
+        }
     }
 
     fn encodeEmphasis(ip: *InlineParser, start: usize, end: usize, delim_len: usize) !Node.Index {

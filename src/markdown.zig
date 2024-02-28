@@ -299,13 +299,25 @@ test "nested emphasis" {
         \\**Hello, _world!_**
         \\_Hello, **world!**_
         \\*Hello, **nested** *world!**
+        \\***Hello,* world!**
+        \\__**Hello, world!**__
+        \\****Hello,** world!**
+        \\__Hello,_ world!_
+        \\*Test**123*
+        \\__Test____123__
         \\
     ,
         \\<p><strong>Hello, <em>world!</em></strong>
         \\<em>Hello, <strong>world!</strong></em>
         \\<strong>Hello, <em>world!</em></strong>
         \\<em>Hello, <strong>world!</strong></em>
-        \\<em>Hello, <strong>nested</strong> <em>world!</em></em></p>
+        \\<em>Hello, <strong>nested</strong> <em>world!</em></em>
+        \\<strong><em>Hello,</em> world!</strong>
+        \\<strong><strong>Hello, world!</strong></strong>
+        \\<strong><strong>Hello,</strong> world!</strong>
+        \\<em><em>Hello,</em> world!</em>
+        \\<em>Test</em><em>123</em>
+        \\<strong>Test</strong><strong>123</strong></p>
         \\
     );
 }
@@ -329,11 +341,18 @@ test "emphasis open and close" {
         \\*Cannot close: *
         \\_Cannot close: _
         \\
+        \\foo*bar*baz
+        \\foo_bar_baz
+        \\underscores__and__**stars**workthesameway
+        \\
     ,
         \\<p>Cannot open: *
         \\Cannot open: _
         \\*Cannot close: *
         \\_Cannot close: _</p>
+        \\<p>foo<em>bar</em>baz
+        \\foo<em>bar</em>baz
+        \\underscores<strong>and</strong><strong>stars</strong>workthesameway</p>
         \\
     );
 }
