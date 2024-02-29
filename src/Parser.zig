@@ -620,9 +620,14 @@ const InlineParser = struct {
         const Tag = enum {
             /// Data is `emphasis`.
             emphasis,
+            /// Data is `none`.
+            link,
+            /// Data is `none`.
+            image,
         };
 
         const Data = union {
+            none: void,
             emphasis: struct {
                 underscore: bool,
                 run_len: usize,
@@ -643,10 +648,24 @@ const InlineParser = struct {
 
     /// Parses all of `ip.content`, returning the children of the node
     /// containing the inline content.
-    fn parse(ip: *InlineParser) !ExtraIndex(Node.Children) {
+    fn parse(ip: *InlineParser) Allocator.Error!ExtraIndex(Node.Children) {
         while (ip.pos < ip.content.len) : (ip.pos += 1) {
             switch (ip.content[ip.pos]) {
                 '\\' => ip.pos += 1,
+                '[' => try ip.pending_inlines.append(ip.parent.allocator, .{
+                    .tag = .link,
+                    .data = .{ .none = {} },
+                    .start = ip.pos,
+                }),
+                '!' => if (ip.pos + 1 < ip.content.len and ip.content[ip.pos + 1] == '[') {
+                    try ip.pending_inlines.append(ip.parent.allocator, .{
+                        .tag = .image,
+                        .data = .{ .none = {} },
+                        .start = ip.pos,
+                    });
+                    ip.pos += 1;
+                },
+                ']' => try ip.parseLink(),
                 '*', '_' => try ip.parseEmphasis(),
                 '`' => try ip.parseCodeSpan(),
                 else => {},
@@ -659,6 +678,65 @@ const InlineParser = struct {
         // should all be part of `children`.
         assert(ip.completed_inlines.items.len == 0);
         return children;
+    }
+
+    /// Parses a link, starting at the `]` at the end of the link text. `ip.pos`
+    /// is left at the closing `)` of the link target or at the closing `]` if
+    /// there is none.
+    fn parseLink(ip: *InlineParser) !void {
+        var i = ip.pending_inlines.items.len;
+        while (i > 0) {
+            i -= 1;
+            if (ip.pending_inlines.items[i].tag == .link or
+                ip.pending_inlines.items[i].tag == .image) break;
+        } else return;
+        const opener = ip.pending_inlines.items[i];
+        ip.pending_inlines.shrinkRetainingCapacity(i);
+        const text_start = switch (opener.tag) {
+            .link => opener.start + 1,
+            .image => opener.start + 2,
+            else => unreachable,
+        };
+
+        if (ip.pos + 1 >= ip.content.len or ip.content[ip.pos + 1] != '(') return;
+        const text_end = ip.pos;
+
+        const target_start = text_end + 2;
+        var target_end = target_start;
+        var nesting_level: usize = 1;
+        while (target_end < ip.content.len) : (target_end += 1) {
+            switch (ip.content[target_end]) {
+                '\\' => target_end += 1,
+                '(' => nesting_level += 1,
+                ')' => {
+                    if (nesting_level == 1) break;
+                    nesting_level -= 1;
+                },
+                else => {},
+            }
+        } else return;
+        ip.pos = target_end;
+
+        const children = try ip.encodeChildren(text_start, text_end);
+        // TODO: backslash unescaping
+        const target = try ip.parent.addString(ip.content[target_start..target_end]);
+
+        const link = try ip.parent.addNode(.{
+            .tag = switch (opener.tag) {
+                .link => .link,
+                .image => .image,
+                else => unreachable,
+            },
+            .data = .{ .link = .{
+                .target = target,
+                .children = children,
+            } },
+        });
+        try ip.completed_inlines.append(ip.parent.allocator, .{
+            .node = link,
+            .start = opener.start,
+            .len = ip.pos - opener.start + 1,
+        });
     }
 
     /// Parses emphasis, starting at the beginning of a run of `*` or `_`
@@ -682,37 +760,36 @@ const InlineParser = struct {
             while (i > 0 and len > 0) {
                 i -= 1;
                 const opener = &ip.pending_inlines.items[i];
-                if (opener.tag == .emphasis and
-                    opener.data.emphasis.underscore == underscore)
-                {
-                    const close_len = @min(opener.data.emphasis.run_len, len);
-                    const opener_end = opener.start + opener.data.emphasis.run_len;
+                if (opener.tag != .emphasis or
+                    opener.data.emphasis.underscore != underscore) continue;
 
-                    const emphasis = try ip.encodeEmphasis(opener_end, start, close_len);
-                    const emphasis_start = opener_end - close_len;
-                    const emphasis_len = start - emphasis_start + close_len;
-                    try ip.completed_inlines.append(ip.parent.allocator, .{
-                        .node = emphasis,
-                        .start = emphasis_start,
-                        .len = emphasis_len,
-                    });
+                const close_len = @min(opener.data.emphasis.run_len, len);
+                const opener_end = opener.start + opener.data.emphasis.run_len;
 
-                    // There may still be other openers further down in the
-                    // stack to close, or part of this run might serve as an
-                    // opener itself.
-                    start += close_len;
-                    len -= close_len;
+                const emphasis = try ip.encodeEmphasis(opener_end, start, close_len);
+                const emphasis_start = opener_end - close_len;
+                const emphasis_len = start - emphasis_start + close_len;
+                try ip.completed_inlines.append(ip.parent.allocator, .{
+                    .node = emphasis,
+                    .start = emphasis_start,
+                    .len = emphasis_len,
+                });
 
-                    // Remove any pending inlines above this on the stack, since
-                    // closing this emphasis will prevent them from being closed.
-                    // Additionally, if this opener is completely consumed by
-                    // being closed, it can be removed.
-                    opener.data.emphasis.run_len -= close_len;
-                    if (opener.data.emphasis.run_len == 0) {
-                        ip.pending_inlines.shrinkRetainingCapacity(i);
-                    } else {
-                        ip.pending_inlines.shrinkRetainingCapacity(i + 1);
-                    }
+                // There may still be other openers further down in the
+                // stack to close, or part of this run might serve as an
+                // opener itself.
+                start += close_len;
+                len -= close_len;
+
+                // Remove any pending inlines above this on the stack, since
+                // closing this emphasis will prevent them from being closed.
+                // Additionally, if this opener is completely consumed by
+                // being closed, it can be removed.
+                opener.data.emphasis.run_len -= close_len;
+                if (opener.data.emphasis.run_len == 0) {
+                    ip.pending_inlines.shrinkRetainingCapacity(i);
+                } else {
+                    ip.pending_inlines.shrinkRetainingCapacity(i + 1);
                 }
             }
         }

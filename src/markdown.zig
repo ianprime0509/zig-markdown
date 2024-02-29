@@ -299,6 +299,34 @@ test "thematic breaks" {
     );
 }
 
+test "links" {
+    try testRender(
+        \\[Link](https://example.com)
+        \\[Link *with inlines*](https://example.com)
+        \\[Nested parens](https://example.com/nested(parens(inside)))
+        \\
+    ,
+        \\<p><a href="https://example.com">Link</a>
+        \\<a href="https://example.com">Link <em>with inlines</em></a>
+        \\<a href="https://example.com/nested(parens(inside))">Nested parens</a></p>
+        \\
+    );
+}
+
+test "images" {
+    try testRender(
+        \\![Alt text](https://example.com/image.png)
+        \\![Alt text *with inlines*](https://example.com/image.png)
+        \\![Nested parens](https://example.com/nested(parens(inside)).png)
+        \\
+    ,
+        \\<p><img src="https://example.com/image.png" alt="Alt text" />
+        \\<img src="https://example.com/image.png" alt="Alt text with inlines" />
+        \\<img src="https://example.com/nested(parens(inside)).png" alt="Nested parens" /></p>
+        \\
+    );
+}
+
 test "emphasis" {
     try testRender(
         \\*Emphasis.*

@@ -40,6 +40,10 @@ pub const Node = struct {
         thematic_break,
 
         // Inlines
+        /// Data is `link`.
+        link,
+        /// Data is `link`.
+        image,
         /// Data is `container`.
         strong,
         /// Data is `container`.
@@ -77,6 +81,10 @@ pub const Node = struct {
         code_block: struct {
             tag: StringIndex,
             content: StringIndex,
+        },
+        link: struct {
+            target: StringIndex,
+            children: ExtraIndex(Children),
         },
     };
 
@@ -181,6 +189,22 @@ fn renderNode(doc: Document, node: Node.Index, writer: anytype, tight_paragraphs
         .thematic_break => {
             try writer.writeAll("<hr />\n");
         },
+        .link => {
+            const target = doc.string(data.link.target);
+            try writer.print("<a href=\"{q}\">", .{fmtHtml(target)});
+            for (doc.extraChildren(data.link.children)) |child| {
+                try doc.renderNode(child, writer, undefined);
+            }
+            try writer.writeAll("</a>");
+        },
+        .image => {
+            const target = doc.string(data.link.target);
+            try writer.print("<img src=\"{q}\" alt=\"", .{fmtHtml(target)});
+            for (doc.extraChildren(data.link.children)) |child| {
+                try doc.renderNodeText(child, writer);
+            }
+            try writer.writeAll("\" />");
+        },
         .strong => {
             try writer.writeAll("<strong>");
             for (doc.extraChildren(data.container.children)) |child| {
@@ -205,6 +229,44 @@ fn renderNode(doc: Document, node: Node.Index, writer: anytype, tight_paragraphs
         },
         .line_break => {
             try writer.writeAll("<br />\n");
+        },
+    }
+}
+
+fn renderNodeText(doc: Document, node: Node.Index, writer: anytype) !void {
+    const data = doc.nodes.items(.data)[@intFromEnum(node)];
+    switch (doc.nodes.items(.tag)[@intFromEnum(node)]) {
+        .root,
+        .list,
+        .list_item,
+        .heading,
+        .code_block,
+        .blockquote,
+        .paragraph,
+        .thematic_break,
+        => unreachable, // Blocks
+
+        .link, .image => {
+            for (doc.extraChildren(data.link.children)) |child| {
+                try doc.renderNodeText(child, writer);
+            }
+        },
+        .strong => {
+            for (doc.extraChildren(data.container.children)) |child| {
+                try doc.renderNodeText(child, writer);
+            }
+        },
+        .emphasis => {
+            for (doc.extraChildren(data.container.children)) |child| {
+                try doc.renderNodeText(child, writer);
+            }
+        },
+        .code_span, .text => {
+            const content = doc.string(data.text.content);
+            try writer.print("{q}", .{fmtHtml(content)});
+        },
+        .line_break => {
+            try writer.writeAll("\n");
         },
     }
 }
