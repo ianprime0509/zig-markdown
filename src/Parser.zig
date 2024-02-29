@@ -718,8 +718,7 @@ const InlineParser = struct {
         ip.pos = target_end;
 
         const children = try ip.encodeChildren(text_start, text_end);
-        // TODO: backslash unescaping
-        const target = try ip.parent.addString(ip.content[target_start..target_end]);
+        const target = try ip.encodeLinkTarget(target_start, target_end);
 
         const link = try ip.parent.addNode(.{
             .tag = switch (opener.tag) {
@@ -737,6 +736,54 @@ const InlineParser = struct {
             .start = opener.start,
             .len = ip.pos - opener.start + 1,
         });
+    }
+
+    fn encodeLinkTarget(ip: *InlineParser, start: usize, end: usize) !StringIndex {
+        // For efficiency, we can encode directly into string_bytes rather than
+        // creating a temporary string and then encoding it, since this process
+        // is entirely linear.
+        const string_top = ip.parent.string_bytes.items.len;
+        errdefer ip.parent.string_bytes.shrinkRetainingCapacity(string_top);
+
+        // TODO: eliminate duplication with encodeTextNode
+        const to_encode = ip.content[start..end];
+        var pos: usize = 0;
+        while (pos < to_encode.len) {
+            switch (to_encode[pos]) {
+                0 => {
+                    try ip.parent.string_bytes.appendSlice(ip.parent.allocator, "\u{FFFD}");
+                    pos += 1;
+                },
+                '\\' => {
+                    if (pos + 1 == to_encode.len) break;
+                    // TODO: an invalid byte might sneak through here
+                    try ip.parent.string_bytes.append(ip.parent.allocator, to_encode[pos + 1]);
+                    pos += 2;
+                },
+                1...('\\' - 1), ('\\' + 1)...127 => |c| {
+                    try ip.parent.string_bytes.append(ip.parent.allocator, c);
+                    pos += 1;
+                },
+                else => |b| {
+                    const cp_len = std.unicode.utf8ByteSequenceLength(b) catch {
+                        try ip.parent.string_bytes.appendSlice(ip.parent.allocator, "\u{FFFD}");
+                        pos += 1;
+                        continue;
+                    };
+                    const is_valid = pos + cp_len < to_encode.len and
+                        std.unicode.utf8ValidateSlice(to_encode[pos..][0..cp_len]);
+                    const cp_encoded = if (is_valid)
+                        to_encode[pos..][0..cp_len]
+                    else
+                        "\u{FFFD}";
+                    try ip.parent.string_bytes.appendSlice(ip.parent.allocator, cp_encoded);
+                    pos += cp_len;
+                },
+            }
+        }
+
+        try ip.parent.string_bytes.append(ip.parent.allocator, 0);
+        return @enumFromInt(string_top);
     }
 
     /// Parses emphasis, starting at the beginning of a run of `*` or `_`
@@ -976,6 +1023,7 @@ const InlineParser = struct {
                                 .data = .{ .none = {} },
                             }));
                         },
+                        // TODO: an invalid byte might sneak through here
                         else => |c| try ip.parent.string_bytes.append(ip.parent.allocator, c),
                     }
                     pos += 2;

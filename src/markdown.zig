@@ -304,11 +304,13 @@ test "links" {
         \\[Link](https://example.com)
         \\[Link *with inlines*](https://example.com)
         \\[Nested parens](https://example.com/nested(parens(inside)))
+        \\[Escaped parens](https://example.com/\)escaped\()
         \\
     ,
         \\<p><a href="https://example.com">Link</a>
         \\<a href="https://example.com">Link <em>with inlines</em></a>
-        \\<a href="https://example.com/nested(parens(inside))">Nested parens</a></p>
+        \\<a href="https://example.com/nested(parens(inside))">Nested parens</a>
+        \\<a href="https://example.com/)escaped(">Escaped parens</a></p>
         \\
     );
 }
@@ -318,11 +320,13 @@ test "images" {
         \\![Alt text](https://example.com/image.png)
         \\![Alt text *with inlines*](https://example.com/image.png)
         \\![Nested parens](https://example.com/nested(parens(inside)).png)
+        \\![Escaped parens](https://example.com/\)escaped\(.png)
         \\
     ,
         \\<p><img src="https://example.com/image.png" alt="Alt text" />
         \\<img src="https://example.com/image.png" alt="Alt text with inlines" />
-        \\<img src="https://example.com/nested(parens(inside)).png" alt="Nested parens" /></p>
+        \\<img src="https://example.com/nested(parens(inside)).png" alt="Nested parens" />
+        \\<img src="https://example.com/)escaped(.png" alt="Escaped parens" /></p>
         \\
     );
 }
