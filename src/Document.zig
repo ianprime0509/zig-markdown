@@ -102,6 +102,7 @@ pub fn ExtraIndex(comptime T: type) type {
     };
 }
 
+/// The index of a null-terminated string in `string_bytes`.
 pub const StringIndex = enum(u32) {
     empty = 0,
     _,

@@ -745,43 +745,14 @@ const InlineParser = struct {
         const string_top = ip.parent.string_bytes.items.len;
         errdefer ip.parent.string_bytes.shrinkRetainingCapacity(string_top);
 
-        // TODO: eliminate duplication with encodeTextNode
-        const to_encode = ip.content[start..end];
-        var pos: usize = 0;
-        while (pos < to_encode.len) {
-            switch (to_encode[pos]) {
-                0 => {
-                    try ip.parent.string_bytes.appendSlice(ip.parent.allocator, "\u{FFFD}");
-                    pos += 1;
-                },
-                '\\' => {
-                    if (pos + 1 == to_encode.len) break;
-                    // TODO: an invalid byte might sneak through here
-                    try ip.parent.string_bytes.append(ip.parent.allocator, to_encode[pos + 1]);
-                    pos += 2;
-                },
-                1...('\\' - 1), ('\\' + 1)...127 => |c| {
-                    try ip.parent.string_bytes.append(ip.parent.allocator, c);
-                    pos += 1;
-                },
-                else => |b| {
-                    const cp_len = std.unicode.utf8ByteSequenceLength(b) catch {
-                        try ip.parent.string_bytes.appendSlice(ip.parent.allocator, "\u{FFFD}");
-                        pos += 1;
-                        continue;
-                    };
-                    const is_valid = pos + cp_len < to_encode.len and
-                        std.unicode.utf8ValidateSlice(to_encode[pos..][0..cp_len]);
-                    const cp_encoded = if (is_valid)
-                        to_encode[pos..][0..cp_len]
-                    else
-                        "\u{FFFD}";
-                    try ip.parent.string_bytes.appendSlice(ip.parent.allocator, cp_encoded);
-                    pos += cp_len;
-                },
+        var text_iter: TextIterator = .{ .content = ip.content[start..end] };
+        while (text_iter.next()) |content| {
+            switch (content) {
+                .char => |c| try ip.parent.string_bytes.append(ip.parent.allocator, c),
+                .text => |s| try ip.parent.string_bytes.appendSlice(ip.parent.allocator, s),
+                .line_break => try ip.parent.string_bytes.append(ip.parent.allocator, '\n'),
             }
         }
-
         try ip.parent.string_bytes.append(ip.parent.allocator, 0);
         return @enumFromInt(string_top);
     }
@@ -987,7 +958,8 @@ const InlineParser = struct {
         return try ip.parent.addExtraChildren(@ptrCast(children));
     }
 
-    /// Encodes textual content `ip.content[start..end]` to `scratch_extra`.
+    /// Encodes textual content `ip.content[start..end]` to `scratch_extra`. The
+    /// encoded content may include both `text` and `line_break` nodes.
     fn encodeTextNode(ip: *InlineParser, start: usize, end: usize) !void {
         // For efficiency, we can encode directly into string_bytes rather than
         // creating a temporary string and then encoding it, since this process
@@ -996,60 +968,29 @@ const InlineParser = struct {
         errdefer ip.parent.string_bytes.shrinkRetainingCapacity(string_top);
 
         var string_start = string_top;
-        const to_encode = ip.content[start..end];
-        var pos: usize = 0;
-        while (pos < to_encode.len) {
-            switch (to_encode[pos]) {
-                0 => {
-                    try ip.parent.string_bytes.appendSlice(ip.parent.allocator, "\u{FFFD}");
-                    pos += 1;
-                },
-                '\\' => {
-                    if (pos + 1 == to_encode.len) break;
-                    switch (to_encode[pos + 1]) {
-                        '\n' => {
-                            if (ip.parent.string_bytes.items.len > string_start) {
-                                try ip.parent.string_bytes.append(ip.parent.allocator, 0);
-                                try ip.parent.addScratchExtraNode(try ip.parent.addNode(.{
-                                    .tag = .text,
-                                    .data = .{ .text = .{
-                                        .content = @enumFromInt(string_start),
-                                    } },
-                                }));
-                                string_start = ip.parent.string_bytes.items.len;
-                            }
-                            try ip.parent.addScratchExtraNode(try ip.parent.addNode(.{
-                                .tag = .line_break,
-                                .data = .{ .none = {} },
-                            }));
-                        },
-                        // TODO: an invalid byte might sneak through here
-                        else => |c| try ip.parent.string_bytes.append(ip.parent.allocator, c),
+        var text_iter: TextIterator = .{ .content = ip.content[start..end] };
+        while (text_iter.next()) |content| {
+            switch (content) {
+                .char => |c| try ip.parent.string_bytes.append(ip.parent.allocator, c),
+                .text => |s| try ip.parent.string_bytes.appendSlice(ip.parent.allocator, s),
+                .line_break => {
+                    if (ip.parent.string_bytes.items.len > string_start) {
+                        try ip.parent.string_bytes.append(ip.parent.allocator, 0);
+                        try ip.parent.addScratchExtraNode(try ip.parent.addNode(.{
+                            .tag = .text,
+                            .data = .{ .text = .{
+                                .content = @enumFromInt(string_start),
+                            } },
+                        }));
+                        string_start = ip.parent.string_bytes.items.len;
                     }
-                    pos += 2;
-                },
-                1...('\\' - 1), ('\\' + 1)...127 => |c| {
-                    try ip.parent.string_bytes.append(ip.parent.allocator, c);
-                    pos += 1;
-                },
-                else => |b| {
-                    const cp_len = std.unicode.utf8ByteSequenceLength(b) catch {
-                        try ip.parent.string_bytes.appendSlice(ip.parent.allocator, "\u{FFFD}");
-                        pos += 1;
-                        continue;
-                    };
-                    const is_valid = pos + cp_len < to_encode.len and
-                        std.unicode.utf8ValidateSlice(to_encode[pos..][0..cp_len]);
-                    const cp_encoded = if (is_valid)
-                        to_encode[pos..][0..cp_len]
-                    else
-                        "\u{FFFD}";
-                    try ip.parent.string_bytes.appendSlice(ip.parent.allocator, cp_encoded);
-                    pos += cp_len;
+                    try ip.parent.addScratchExtraNode(try ip.parent.addNode(.{
+                        .tag = .line_break,
+                        .data = .{ .none = {} },
+                    }));
                 },
             }
         }
-
         if (ip.parent.string_bytes.items.len > string_start) {
             try ip.parent.string_bytes.append(ip.parent.allocator, 0);
             try ip.parent.addScratchExtraNode(try ip.parent.addNode(.{
@@ -1060,6 +1001,61 @@ const InlineParser = struct {
             }));
         }
     }
+
+    /// An iterator over parts of textual content, handling unescaping of
+    /// escaped characters and line breaks.
+    const TextIterator = struct {
+        content: []const u8,
+        pos: usize = 0,
+
+        const Content = union(enum) {
+            char: u8,
+            text: []const u8,
+            line_break,
+        };
+
+        const replacement = "\u{FFFD}";
+
+        fn next(iter: *TextIterator) ?Content {
+            if (iter.pos >= iter.content.len) return null;
+            if (iter.content[iter.pos] == '\\') {
+                iter.pos += 1;
+                return switch (iter.nextCodepoint() orelse return null) {
+                    .char => |c| if (c == '\n') .line_break else .{ .char = c },
+                    else => |content| content,
+                };
+            }
+            return iter.nextCodepoint();
+        }
+
+        fn nextCodepoint(iter: *TextIterator) ?Content {
+            if (iter.pos >= iter.content.len) return null;
+            switch (iter.content[iter.pos]) {
+                0 => {
+                    iter.pos += 1;
+                    return .{ .text = replacement };
+                },
+                1...127 => |c| {
+                    iter.pos += 1;
+                    return .{ .char = c };
+                },
+                else => |b| {
+                    const cp_len = std.unicode.utf8ByteSequenceLength(b) catch {
+                        iter.pos += 1;
+                        return .{ .text = replacement };
+                    };
+                    const is_valid = iter.pos + cp_len < iter.content.len and
+                        std.unicode.utf8ValidateSlice(iter.content[iter.pos..][0..cp_len]);
+                    const cp_encoded = if (is_valid)
+                        iter.content[iter.pos..][0..cp_len]
+                    else
+                        replacement;
+                    iter.pos += cp_len;
+                    return .{ .text = cp_encoded };
+                },
+            }
+        }
+    };
 };
 
 fn parseInlines(p: *Parser, content: []const u8) !ExtraIndex(Node.Children) {
