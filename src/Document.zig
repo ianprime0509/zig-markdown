@@ -1,6 +1,7 @@
 //! An abstract tree representation of a Markdown document.
 
 const std = @import("std");
+const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 
 nodes: Node.List.Slice,
@@ -65,12 +66,7 @@ pub const Node = struct {
             content: StringIndex,
         },
         list: struct {
-            info: packed struct {
-                tight: bool,
-                ordered: bool,
-                /// Between 0 and 999,999,999, inclusive.
-                start: u30,
-            },
+            start: ListStart,
             children: ExtraIndex(Children),
         },
         heading: struct {
@@ -86,6 +82,23 @@ pub const Node = struct {
             target: StringIndex,
             children: ExtraIndex(Children),
         },
+    };
+
+    /// The starting number of a list. This is either a number between 0 and
+    /// 999,999,999, inclusive, or `unordered` to indicate an unordered list.
+    pub const ListStart = enum(u30) {
+        // When https://github.com/ziglang/zig/issues/104 is implemented, this
+        // type can be more naturally expressed as ?u30. As it is, we want
+        // values to fit within 4 bytes, so ?u30 does not yet suffice for
+        // storage.
+        unordered = std.math.maxInt(u30),
+        _,
+
+        pub fn asNumber(start: ListStart) ?u30 {
+            if (start == .unordered) return null;
+            assert(@intFromEnum(start) <= 999_999_999);
+            return @intFromEnum(start);
+        }
     };
 
     /// Trailing: `len` times `Node.Index`
@@ -116,31 +129,31 @@ pub fn deinit(doc: *Document, allocator: Allocator) void {
 }
 
 pub fn render(doc: Document, writer: anytype) @TypeOf(writer).Error!void {
-    try doc.renderNode(.root, writer, false);
+    try doc.renderNode(.root, writer);
 }
 
-fn renderNode(doc: Document, node: Node.Index, writer: anytype, tight_paragraphs: bool) !void {
+fn renderNode(doc: Document, node: Node.Index, writer: anytype) !void {
     const data = doc.nodes.items(.data)[@intFromEnum(node)];
     switch (doc.nodes.items(.tag)[@intFromEnum(node)]) {
         .root => {
             for (doc.extraChildren(data.container.children)) |child| {
-                try doc.renderNode(child, writer, false);
+                try doc.renderNode(child, writer);
             }
         },
         .list => {
-            if (data.list.info.ordered) {
-                if (data.list.info.start == 1) {
+            if (data.list.start.asNumber()) |start| {
+                if (start == 1) {
                     try writer.writeAll("<ol>\n");
                 } else {
-                    try writer.print("<ol start=\"{}\">\n", .{data.list.info.start});
+                    try writer.print("<ol start=\"{}\">\n", .{start});
                 }
             } else {
                 try writer.writeAll("<ul>\n");
             }
             for (doc.extraChildren(data.list.children)) |child| {
-                try doc.renderNode(child, writer, data.list.info.tight);
+                try doc.renderNode(child, writer);
             }
-            if (data.list.info.ordered) {
+            if (data.list.start.asNumber() != null) {
                 try writer.writeAll("</ol>\n");
             } else {
                 try writer.writeAll("</ul>\n");
@@ -149,14 +162,14 @@ fn renderNode(doc: Document, node: Node.Index, writer: anytype, tight_paragraphs
         .list_item => {
             try writer.writeAll("<li>");
             for (doc.extraChildren(data.container.children)) |child| {
-                try doc.renderNode(child, writer, tight_paragraphs);
+                try doc.renderNode(child, writer);
             }
             try writer.writeAll("</li>\n");
         },
         .heading => {
             try writer.print("<h{}>", .{data.heading.level});
             for (doc.extraChildren(data.heading.children)) |child| {
-                try doc.renderNode(child, writer, false);
+                try doc.renderNode(child, writer);
             }
             try writer.print("</h{}>\n", .{data.heading.level});
         },
@@ -172,20 +185,16 @@ fn renderNode(doc: Document, node: Node.Index, writer: anytype, tight_paragraphs
         .blockquote => {
             try writer.writeAll("<blockquote>\n");
             for (doc.extraChildren(data.container.children)) |child| {
-                try doc.renderNode(child, writer, tight_paragraphs);
+                try doc.renderNode(child, writer);
             }
             try writer.writeAll("</blockquote>\n");
         },
         .paragraph => {
-            if (!tight_paragraphs) {
-                try writer.writeAll("<p>");
-            }
+            try writer.writeAll("<p>");
             for (doc.extraChildren(data.container.children)) |child| {
-                try doc.renderNode(child, writer, false);
+                try doc.renderNode(child, writer);
             }
-            if (!tight_paragraphs) {
-                try writer.writeAll("</p>\n");
-            }
+            try writer.writeAll("</p>\n");
         },
         .thematic_break => {
             try writer.writeAll("<hr />\n");
@@ -194,7 +203,7 @@ fn renderNode(doc: Document, node: Node.Index, writer: anytype, tight_paragraphs
             const target = doc.string(data.link.target);
             try writer.print("<a href=\"{q}\">", .{fmtHtml(target)});
             for (doc.extraChildren(data.link.children)) |child| {
-                try doc.renderNode(child, writer, undefined);
+                try doc.renderNode(child, writer);
             }
             try writer.writeAll("</a>");
         },
@@ -209,14 +218,14 @@ fn renderNode(doc: Document, node: Node.Index, writer: anytype, tight_paragraphs
         .strong => {
             try writer.writeAll("<strong>");
             for (doc.extraChildren(data.container.children)) |child| {
-                try doc.renderNode(child, writer, undefined);
+                try doc.renderNode(child, writer);
             }
             try writer.writeAll("</strong>");
         },
         .emphasis => {
             try writer.writeAll("<em>");
             for (doc.extraChildren(data.container.children)) |child| {
-                try doc.renderNode(child, writer, undefined);
+                try doc.renderNode(child, writer);
             }
             try writer.writeAll("</em>");
         },
@@ -299,22 +308,29 @@ fn formatHtml(
 }
 
 pub fn ExtraData(comptime T: type) type {
-    return struct { data: T, end: usize };
+    return struct {
+        data: T,
+        end: usize,
+
+        pub fn decodeFrom(extra: []const u32, index: ExtraIndex(T)) @This() {
+            const Payload = @TypeOf(index).Payload;
+            const fields = @typeInfo(Payload).Struct.fields;
+            var i: usize = @intFromEnum(index);
+            var result: Payload = undefined;
+            inline for (fields) |field| {
+                @field(result, field.name) = switch (field.type) {
+                    u32 => extra[i],
+                    else => @compileError("bad field type"),
+                };
+                i += 1;
+            }
+            return .{ .data = result, .end = i };
+        }
+    };
 }
 
 pub fn extraData(d: Document, index: anytype) ExtraData(@TypeOf(index).Payload) {
-    const Payload = @TypeOf(index).Payload;
-    const fields = @typeInfo(Payload).Struct.fields;
-    var i: usize = @intFromEnum(index);
-    var result: Payload = undefined;
-    inline for (fields) |field| {
-        @field(result, field.name) = switch (field.type) {
-            u32 => d.extra[i],
-            else => @compileError("bad field type"),
-        };
-        i += 1;
-    }
-    return .{ .data = result, .end = i };
+    return ExtraData(@TypeOf(index).Payload).decodeFrom(d.extra, index);
 }
 
 pub fn extraChildren(d: Document, index: ExtraIndex(Node.Children)) []const Node.Index {

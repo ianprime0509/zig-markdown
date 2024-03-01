@@ -25,6 +25,7 @@ const Allocator = mem.Allocator;
 const Document = @import("Document.zig");
 const Node = Document.Node;
 const ExtraIndex = Document.ExtraIndex;
+const ExtraData = Document.ExtraData;
 const StringIndex = Document.StringIndex;
 
 nodes: Node.List = .{},
@@ -64,13 +65,12 @@ const Block = struct {
     const Data = union {
         none: void,
         list: struct {
-            tight: bool,
             marker: ListMarker,
             /// Between 0 and 999,999,999, inclusive.
             start: u30,
         },
         list_item: struct {
-            indent: usize,
+            continuation_indent: usize,
         },
         heading: struct {
             /// Between 1 and 6, inclusive.
@@ -120,8 +120,12 @@ const Block = struct {
         const indent = line.len - unindented.len;
         return switch (b.tag) {
             .list => line,
-            .list_item => if (indent > b.data.list_item.indent)
-                line[b.data.list_item.indent..]
+            .list_item => if (indent >= b.data.list_item.continuation_indent)
+                line[b.data.list_item.continuation_indent..]
+            else if (unindented.len == 0)
+                // Blank lines should not close list items, since there may be
+                // more indented contents to follow after the blank line.
+                ""
             else
                 null,
             .heading => null,
@@ -303,7 +307,7 @@ const BlockStart = struct {
         list_item: struct {
             marker: Block.Data.ListMarker,
             number: u30,
-            indent: usize,
+            continuation_indent: usize,
         },
         heading: struct {
             /// Between 1 and 6, inclusive.
@@ -337,7 +341,6 @@ fn appendBlockStart(p: *Parser, block_start: BlockStart) !void {
         try p.pending_blocks.append(p.allocator, .{
             .tag = .list,
             .data = .{ .list = .{
-                .tight = true,
                 .marker = block_start.data.list_item.marker,
                 .start = block_start.data.list_item.number,
             } },
@@ -348,7 +351,7 @@ fn appendBlockStart(p: *Parser, block_start: BlockStart) !void {
 
     const tag: Block.Tag, const data: Block.Data = switch (block_start.tag) {
         .list_item => .{ .list_item, .{ .list_item = .{
-            .indent = block_start.data.list_item.indent,
+            .continuation_indent = block_start.data.list_item.continuation_indent,
         } } },
         .heading => .{ .heading, .{ .heading = .{
             .level = block_start.data.heading.level,
@@ -387,7 +390,7 @@ fn startBlock(p: *Parser, line: []const u8) !?BlockStart {
             .data = .{ .list_item = .{
                 .marker = list_item.marker,
                 .number = list_item.number,
-                .indent = indent,
+                .continuation_indent = list_item.continuation_indent,
             } },
             .rest = list_item.rest,
         };
@@ -423,6 +426,7 @@ fn startBlock(p: *Parser, line: []const u8) !?BlockStart {
 const ListItemStart = struct {
     marker: Block.Data.ListMarker,
     number: u30,
+    continuation_indent: usize,
     rest: []const u8,
 };
 
@@ -431,12 +435,14 @@ fn startListItem(unindented_line: []const u8) ?ListItemStart {
         return .{
             .marker = .@"-",
             .number = undefined,
+            .continuation_indent = 2,
             .rest = unindented_line[2..],
         };
     } else if (mem.startsWith(u8, unindented_line, "* ")) {
         return .{
             .marker = .@"*",
             .number = undefined,
+            .continuation_indent = 2,
             .rest = unindented_line[2..],
         };
     }
@@ -451,6 +457,7 @@ fn startListItem(unindented_line: []const u8) ?ListItemStart {
     return .{
         .marker = .number,
         .number = number,
+        .continuation_indent = number_end + 2,
         .rest = after_number[2..],
     };
 }
@@ -533,14 +540,42 @@ fn closeLastBlock(p: *Parser) !void {
     const node = switch (b.tag) {
         .list => list: {
             assert(b.string_start == p.scratch_string.items.len);
-            const children = try p.addExtraChildren(@ptrCast(p.scratch_extra.items[b.extra_start..]));
+
+            // To more efficiently represent lists with only simple
+            // (inline-only) content, if the list contains only items with
+            // single paragraphs as children, the paragraphs are removed,
+            // leaving only their children as inline contents of the list items.
+            const list_items = p.scratch_extra.items[b.extra_start..];
+            const nodes = p.nodes.slice();
+            const simple = for (list_items) |item| {
+                assert(nodes.items(.tag)[item] == .list_item);
+                const item_children = ExtraData(Node.Children).decodeFrom(
+                    p.extra.items,
+                    nodes.items(.data)[item].container.children,
+                );
+                if (item_children.data.len != 1) break false;
+                const item_child = p.extra.items[item_children.end];
+                if (nodes.items(.tag)[item_child] != .paragraph) break false;
+            } else true;
+            if (simple) {
+                for (list_items) |item| {
+                    const item_children = ExtraData(Node.Children).decodeFrom(
+                        p.extra.items,
+                        nodes.items(.data)[item].container.children,
+                    );
+                    const item_child = p.extra.items[item_children.end];
+                    const inline_children = nodes.items(.data)[item_child].container.children;
+                    nodes.items(.data)[item].container.children = inline_children;
+                }
+            }
+
+            const children = try p.addExtraChildren(@ptrCast(list_items));
             break :list try p.addNode(.{
                 .tag = .list,
                 .data = .{ .list = .{
-                    .info = .{
-                        .tight = b.data.list.tight,
-                        .ordered = b.data.list.marker == .number,
-                        .start = b.data.list.start,
+                    .start = switch (b.data.list.marker) {
+                        .number => @enumFromInt(b.data.list.start),
+                        .@"-", .@"*" => .unordered,
                     },
                     .children = children,
                 } },

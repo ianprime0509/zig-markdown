@@ -9,33 +9,10 @@ pub fn main() !void {
     const gpa = gpa_state.allocator();
 
     const input =
-        \\Hello, world!
-        \\
-        \\Another paragraph. *Emphasis.* **Strong.** ***Strong emphasis.***
-        \\Nested _emphasis *more*_. Nesting _break *here_*.
-        \\
-        \\---
-        \\lol
-        \\
-        \\# Some code
-        \\
-        \\```zig
-        \\const std = @import("std");
-        \\
-        \\pub fn main() void {
-        \\    std.debug.print("Hello, world!\n", .{});
-        \\}
-        \\```
-        \\
-        \\> Quote
-        \\> More quote
-        \\
-        \\1. Hi
-        \\2. Hi
-        \\3. Hi
-        \\- Hi
-        \\  Bye
-        \\* Hi
+        \\- - Item 1.
+        \\  - Item 2.
+        \\Item 2 continued.
+        \\  * New list.
         \\
     ;
 
@@ -142,6 +119,84 @@ test "ordered lists" {
         \\<li>Dessert</li>
         \\<li>Midnight snack</li>
         \\</ol>
+        \\
+    );
+}
+
+test "nested lists" {
+    try testRender(
+        \\- - Item 1.
+        \\  - Item 2.
+        \\Item 2 continued.
+        \\  * New list.
+        \\
+    ,
+        \\<ul>
+        \\<li><ul>
+        \\<li>Item 1.</li>
+        \\<li>Item 2.
+        \\Item 2 continued.</li>
+        \\</ul>
+        \\<ul>
+        \\<li>New list.</li>
+        \\</ul>
+        \\</li>
+        \\</ul>
+        \\
+    );
+}
+
+test "lists with block content" {
+    try testRender(
+        \\1. Item 1.
+        \\2. Item 2.
+        \\
+        \\   This one has another paragraph.
+        \\3. Item 3.
+        \\
+        \\- > Blockquote.
+        \\- - Sub-list.
+        \\  - Sub-list continued.
+        \\  * Different sub-list.
+        \\- ## Heading.
+        \\
+        \\  Some contents below the heading.
+        \\  1. Item 1.
+        \\  2. Item 2.
+        \\  3. Item 3.
+        \\
+    ,
+        \\<ol>
+        \\<li><p>Item 1.</p>
+        \\</li>
+        \\<li><p>Item 2.</p>
+        \\<p>This one has another paragraph.</p>
+        \\</li>
+        \\<li><p>Item 3.</p>
+        \\</li>
+        \\</ol>
+        \\<ul>
+        \\<li><blockquote>
+        \\<p>Blockquote.</p>
+        \\</blockquote>
+        \\</li>
+        \\<li><ul>
+        \\<li>Sub-list.</li>
+        \\<li>Sub-list continued.</li>
+        \\</ul>
+        \\<ul>
+        \\<li>Different sub-list.</li>
+        \\</ul>
+        \\</li>
+        \\<li><h2>Heading.</h2>
+        \\<p>Some contents below the heading.</p>
+        \\<ol>
+        \\<li>Item 1.</li>
+        \\<li>Item 2.</li>
+        \\<li>Item 3.</li>
+        \\</ol>
+        \\</li>
+        \\</ul>
         \\
     );
 }
