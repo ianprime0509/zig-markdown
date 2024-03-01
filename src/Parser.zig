@@ -549,22 +549,14 @@ fn closeLastBlock(p: *Parser) !void {
             const nodes = p.nodes.slice();
             const simple = for (list_items) |item| {
                 assert(nodes.items(.tag)[item] == .list_item);
-                const item_children = ExtraData(Node.Children).decodeFrom(
-                    p.extra.items,
-                    nodes.items(.data)[item].container.children,
-                );
-                if (item_children.data.len != 1) break false;
-                const item_child = p.extra.items[item_children.end];
-                if (nodes.items(.tag)[item_child] != .paragraph) break false;
+                const item_children = p.extraChildren(nodes.items(.data)[item].container.children);
+                if (item_children.len != 1 or
+                    nodes.items(.tag)[@intFromEnum(item_children[0])] != .paragraph) break false;
             } else true;
             if (simple) {
                 for (list_items) |item| {
-                    const item_children = ExtraData(Node.Children).decodeFrom(
-                        p.extra.items,
-                        nodes.items(.data)[item].container.children,
-                    );
-                    const item_child = p.extra.items[item_children.end];
-                    const inline_children = nodes.items(.data)[item_child].container.children;
+                    const item_children = p.extraChildren(nodes.items(.data)[item].container.children);
+                    const inline_children = nodes.items(.data)[@intFromEnum(item_children[0])].container.children;
                     nodes.items(.data)[item].container.children = inline_children;
                 }
             }
@@ -1100,6 +1092,26 @@ fn parseInlines(p: *Parser, content: []const u8) !ExtraIndex(Node.Children) {
     };
     defer ip.deinit();
     return try ip.parse();
+}
+
+pub fn extraData(p: Parser, index: anytype) ExtraData(@TypeOf(index).Payload) {
+    const Payload = @TypeOf(index).Payload;
+    const fields = @typeInfo(Payload).Struct.fields;
+    var i: usize = @intFromEnum(index);
+    var result: Payload = undefined;
+    inline for (fields) |field| {
+        @field(result, field.name) = switch (field.type) {
+            u32 => p.extra.items[i],
+            else => @compileError("bad field type"),
+        };
+        i += 1;
+    }
+    return .{ .data = result, .end = i };
+}
+
+pub fn extraChildren(p: Parser, index: ExtraIndex(Node.Children)) []const Node.Index {
+    const children = p.extraData(index);
+    return @ptrCast(p.extra.items[children.end..][0..children.data.len]);
 }
 
 fn addNode(p: *Parser, node: Node) !Node.Index {

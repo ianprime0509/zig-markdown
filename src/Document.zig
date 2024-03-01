@@ -308,29 +308,22 @@ fn formatHtml(
 }
 
 pub fn ExtraData(comptime T: type) type {
-    return struct {
-        data: T,
-        end: usize,
-
-        pub fn decodeFrom(extra: []const u32, index: ExtraIndex(T)) @This() {
-            const Payload = @TypeOf(index).Payload;
-            const fields = @typeInfo(Payload).Struct.fields;
-            var i: usize = @intFromEnum(index);
-            var result: Payload = undefined;
-            inline for (fields) |field| {
-                @field(result, field.name) = switch (field.type) {
-                    u32 => extra[i],
-                    else => @compileError("bad field type"),
-                };
-                i += 1;
-            }
-            return .{ .data = result, .end = i };
-        }
-    };
+    return struct { data: T, end: usize };
 }
 
 pub fn extraData(d: Document, index: anytype) ExtraData(@TypeOf(index).Payload) {
-    return ExtraData(@TypeOf(index).Payload).decodeFrom(d.extra, index);
+    const Payload = @TypeOf(index).Payload;
+    const fields = @typeInfo(Payload).Struct.fields;
+    var i: usize = @intFromEnum(index);
+    var result: Payload = undefined;
+    inline for (fields) |field| {
+        @field(result, field.name) = switch (field.type) {
+            u32 => d.extra[i],
+            else => @compileError("bad field type"),
+        };
+        i += 1;
+    }
+    return .{ .data = result, .end = i };
 }
 
 pub fn extraChildren(d: Document, index: ExtraIndex(Node.Children)) []const Node.Index {
