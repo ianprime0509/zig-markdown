@@ -371,7 +371,7 @@ test "code blocks" {
         \\<pre><code>Hello, world!
         \\This is some code.
         \\</code></pre>
-        \\<pre><code class="zig test">const std = @import("std");
+        \\<pre><code class="zig test">const std = @import(&quot;std&quot;);
         \\
         \\test {
         \\    try std.testing.expect(2 + 2 == 4);
@@ -663,10 +663,10 @@ test "backslash escapes" {
         \\Not code: `hi`.
         \\# Not a title.
         \\## Also not a title.
-        \\> Not a blockquote.
+        \\&gt; Not a blockquote.
         \\- Not a list item.
         \\Any \punctuation\ characte\r can be escaped:
-        \\!"#$%&amp;'()*+,-./:;&lt;=>?@[\]^_`{|}~</p>
+        \\!&quot;#$%&amp;'()*+,-./:;&lt;=&gt;?@[\]^_`{|}~</p>
         \\
     );
 }
