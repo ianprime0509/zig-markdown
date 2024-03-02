@@ -778,7 +778,7 @@ const InlineParser = struct {
             switch (content) {
                 .char => |c| try ip.parent.string_bytes.append(ip.parent.allocator, c),
                 .text => |s| try ip.parent.string_bytes.appendSlice(ip.parent.allocator, s),
-                .line_break => try ip.parent.string_bytes.append(ip.parent.allocator, '\n'),
+                .line_break => try ip.parent.string_bytes.appendSlice(ip.parent.allocator, "\\\n"),
             }
         }
         try ip.parent.string_bytes.append(ip.parent.allocator, 0);
