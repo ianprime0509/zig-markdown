@@ -10,6 +10,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .root_source_file = .{ .path = "src/markdown.zig" },
     });
+    exe.linkLibC();
     b.installArtifact(exe);
 
     const run = b.addRunArtifact(exe);
