@@ -676,7 +676,7 @@ const InlineParser = struct {
 
     /// Parses all of `ip.content`, returning the children of the node
     /// containing the inline content.
-    fn parse(ip: *InlineParser) Allocator.Error!ExtraIndex(Node.Children) {
+    fn parse(ip: *InlineParser) Allocator.Error!ExtraIndex {
         while (ip.pos < ip.content.len) : (ip.pos += 1) {
             switch (ip.content[ip.pos]) {
                 '\\' => ip.pos += 1,
@@ -963,7 +963,7 @@ const InlineParser = struct {
 
     /// Encodes children parsed in the content range `start..end`. The children
     /// will be text nodes and any completed inlines within the range.
-    fn encodeChildren(ip: *InlineParser, start: usize, end: usize) !ExtraIndex(Node.Children) {
+    fn encodeChildren(ip: *InlineParser, start: usize, end: usize) !ExtraIndex {
         const scratch_extra_top = ip.parent.scratch_extra.items.len;
         defer ip.parent.scratch_extra.shrinkRetainingCapacity(scratch_extra_top);
 
@@ -1104,7 +1104,7 @@ const InlineParser = struct {
     };
 };
 
-fn parseInlines(p: *Parser, content: []const u8) !ExtraIndex(Node.Children) {
+fn parseInlines(p: *Parser, content: []const u8) !ExtraIndex {
     var ip: InlineParser = .{
         .parent = p,
         .content = mem.trimRight(u8, content, " \t\n"),
@@ -1113,11 +1113,10 @@ fn parseInlines(p: *Parser, content: []const u8) !ExtraIndex(Node.Children) {
     return try ip.parse();
 }
 
-pub fn extraData(p: Parser, index: anytype) ExtraData(@TypeOf(index).Payload) {
-    const Payload = @TypeOf(index).Payload;
-    const fields = @typeInfo(Payload).Struct.fields;
+pub fn extraData(p: Parser, comptime T: type, index: ExtraIndex) ExtraData(T) {
+    const fields = @typeInfo(T).Struct.fields;
     var i: usize = @intFromEnum(index);
-    var result: Payload = undefined;
+    var result: T = undefined;
     inline for (fields) |field| {
         @field(result, field.name) = switch (field.type) {
             u32 => p.extra.items[i],
@@ -1128,8 +1127,8 @@ pub fn extraData(p: Parser, index: anytype) ExtraData(@TypeOf(index).Payload) {
     return .{ .data = result, .end = i };
 }
 
-pub fn extraChildren(p: Parser, index: ExtraIndex(Node.Children)) []const Node.Index {
-    const children = p.extraData(index);
+pub fn extraChildren(p: Parser, index: ExtraIndex) []const Node.Index {
+    const children = p.extraData(Node.Children, index);
     return @ptrCast(p.extra.items[children.end..][0..children.data.len]);
 }
 
@@ -1149,8 +1148,8 @@ fn addString(p: *Parser, s: []const u8) !StringIndex {
     return index;
 }
 
-fn addExtraChildren(p: *Parser, nodes: []const Node.Index) !ExtraIndex(Node.Children) {
-    const index: ExtraIndex(Node.Children) = @enumFromInt(@as(u32, @intCast(p.extra.items.len)));
+fn addExtraChildren(p: *Parser, nodes: []const Node.Index) !ExtraIndex {
+    const index: ExtraIndex = @enumFromInt(@as(u32, @intCast(p.extra.items.len)));
     try p.extra.ensureUnusedCapacity(p.allocator, nodes.len + 1);
     p.extra.appendAssumeCapacity(@intCast(nodes.len));
     p.extra.appendSliceAssumeCapacity(@ptrCast(nodes));

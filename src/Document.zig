@@ -60,19 +60,19 @@ pub const Node = struct {
     pub const Data = union {
         none: void,
         container: struct {
-            children: ExtraIndex(Children),
+            children: ExtraIndex,
         },
         text: struct {
             content: StringIndex,
         },
         list: struct {
             start: ListStart,
-            children: ExtraIndex(Children),
+            children: ExtraIndex,
         },
         heading: struct {
             /// Between 1 and 6, inclusive.
             level: u3,
-            children: ExtraIndex(Children),
+            children: ExtraIndex,
         },
         code_block: struct {
             tag: StringIndex,
@@ -80,7 +80,7 @@ pub const Node = struct {
         },
         link: struct {
             target: StringIndex,
-            children: ExtraIndex(Children),
+            children: ExtraIndex,
         },
     };
 
@@ -107,13 +107,7 @@ pub const Node = struct {
     };
 };
 
-pub fn ExtraIndex(comptime T: type) type {
-    return enum(u32) {
-        _,
-
-        pub const Payload = T;
-    };
-}
+pub const ExtraIndex = enum(u32) { _ };
 
 /// The index of a null-terminated string in `string_bytes`.
 pub const StringIndex = enum(u32) {
@@ -311,11 +305,10 @@ pub fn ExtraData(comptime T: type) type {
     return struct { data: T, end: usize };
 }
 
-pub fn extraData(d: Document, index: anytype) ExtraData(@TypeOf(index).Payload) {
-    const Payload = @TypeOf(index).Payload;
-    const fields = @typeInfo(Payload).Struct.fields;
+pub fn extraData(d: Document, comptime T: type, index: ExtraIndex) ExtraData(T) {
+    const fields = @typeInfo(T).Struct.fields;
     var i: usize = @intFromEnum(index);
-    var result: Payload = undefined;
+    var result: T = undefined;
     inline for (fields) |field| {
         @field(result, field.name) = switch (field.type) {
             u32 => d.extra[i],
@@ -326,8 +319,8 @@ pub fn extraData(d: Document, index: anytype) ExtraData(@TypeOf(index).Payload) 
     return .{ .data = result, .end = i };
 }
 
-pub fn extraChildren(d: Document, index: ExtraIndex(Node.Children)) []const Node.Index {
-    const children = d.extraData(index);
+pub fn extraChildren(d: Document, index: ExtraIndex) []const Node.Index {
+    const children = d.extraData(Node.Children, index);
     return @ptrCast(d.extra[children.end..][0..children.data.len]);
 }
 
