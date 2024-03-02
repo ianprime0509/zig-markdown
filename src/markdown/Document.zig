@@ -27,7 +27,7 @@ pub const Node = struct {
         // Blocks
         /// Data is `list`.
         list,
-        /// Data is `container`.
+        /// Data is `list_item`.
         list_item,
         /// Data is `heading`.
         heading,
@@ -67,6 +67,10 @@ pub const Node = struct {
         },
         list: struct {
             start: ListStart,
+            children: ExtraIndex,
+        },
+        list_item: struct {
+            tight: bool,
             children: ExtraIndex,
         },
         heading: struct {
@@ -172,8 +176,15 @@ pub fn Renderer(comptime Writer: type, comptime Context: type) type {
                 },
                 .list_item => {
                     try writer.writeAll("<li>");
-                    for (doc.extraChildren(data.container.children)) |child| {
-                        try r.renderFn(r, doc, child, writer);
+                    for (doc.extraChildren(data.list_item.children)) |child| {
+                        if (data.list_item.tight and doc.nodes.items(.tag)[@intFromEnum(child)] == .paragraph) {
+                            const para_data = doc.nodes.items(.data)[@intFromEnum(child)];
+                            for (doc.extraChildren(para_data.container.children)) |para_child| {
+                                try r.renderFn(r, doc, para_child, writer);
+                            }
+                        } else {
+                            try r.renderFn(r, doc, child, writer);
+                        }
                     }
                     try writer.writeAll("</li>\n");
                 },
@@ -331,13 +342,13 @@ pub fn ExtraData(comptime T: type) type {
     return struct { data: T, end: usize };
 }
 
-pub fn extraData(d: Document, comptime T: type, index: ExtraIndex) ExtraData(T) {
+pub fn extraData(doc: Document, comptime T: type, index: ExtraIndex) ExtraData(T) {
     const fields = @typeInfo(T).Struct.fields;
     var i: usize = @intFromEnum(index);
     var result: T = undefined;
     inline for (fields) |field| {
         @field(result, field.name) = switch (field.type) {
-            u32 => d.extra[i],
+            u32 => doc.extra[i],
             else => @compileError("bad field type"),
         };
         i += 1;
@@ -345,12 +356,12 @@ pub fn extraData(d: Document, comptime T: type, index: ExtraIndex) ExtraData(T) 
     return .{ .data = result, .end = i };
 }
 
-pub fn extraChildren(d: Document, index: ExtraIndex) []const Node.Index {
-    const children = d.extraData(Node.Children, index);
-    return @ptrCast(d.extra[children.end..][0..children.data.len]);
+pub fn extraChildren(doc: Document, index: ExtraIndex) []const Node.Index {
+    const children = doc.extraData(Node.Children, index);
+    return @ptrCast(doc.extra[children.end..][0..children.data.len]);
 }
 
-pub fn string(d: Document, index: StringIndex) [:0]const u8 {
+pub fn string(doc: Document, index: StringIndex) [:0]const u8 {
     const start = @intFromEnum(index);
-    return std.mem.span(@as([*:0]u8, @ptrCast(d.string_bytes[start..].ptr)));
+    return std.mem.span(@as([*:0]u8, @ptrCast(doc.string_bytes[start..].ptr)));
 }

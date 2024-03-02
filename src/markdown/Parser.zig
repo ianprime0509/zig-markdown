@@ -69,6 +69,8 @@ const Block = struct {
             marker: ListMarker,
             /// Between 0 and 999,999,999, inclusive.
             start: u30,
+            tight: bool,
+            last_line_blank: bool = false,
         },
         list_item: struct {
             continuation_indent: usize,
@@ -239,13 +241,29 @@ pub fn feedLine(p: *Parser, line: []const u8) Allocator.Error!void {
     const rest_line_trimmed = mem.trimLeft(u8, rest_line, " \t");
     switch (can_accept) {
         .blocks => {
-            if (!isBlank(rest_line)) {
+            // If we're inside a list item and the rest of the line is blank, it
+            // means that any subsequent child of the list item (or subsequent
+            // item in the list) will cause the containing list to be considered
+            // loose. However, we can't immediately declare that the list is
+            // loose, since we might just be looking at a blank line after the
+            // end of the last item in the list. The final determination will be
+            // made when appending the next child of the list or list item.
+            const maybe_containing_list = if (p.pending_blocks.items.len > 0 and p.pending_blocks.getLast().tag == .list_item)
+                &p.pending_blocks.items[p.pending_blocks.items.len - 2]
+            else
+                null;
+
+            if (rest_line_trimmed.len > 0) {
                 try p.appendBlockStart(.{
                     .tag = .paragraph,
                     .data = .{ .none = {} },
                     .rest = undefined,
                 });
                 try p.addScratchStringLine(rest_line_trimmed);
+            }
+
+            if (maybe_containing_list) |containing_list| {
+                containing_list.data.list.last_line_blank = rest_line_trimmed.len == 0;
             }
         },
         .inlines => try p.addScratchStringLine(rest_line_trimmed),
@@ -323,14 +341,29 @@ const BlockStart = struct {
 };
 
 fn appendBlockStart(p: *Parser, block_start: BlockStart) !void {
-    // Close the last block if it is a list and the new block is not a list item
-    // or not of the same marker type.
     if (p.pending_blocks.getLastOrNull()) |last_pending_block| {
+        // Close the last block if it is a list and the new block is not a list item
+        // or not of the same marker type.
         if (last_pending_block.tag == .list and
             (block_start.tag != .list_item or
             block_start.data.list_item.marker != last_pending_block.data.list.marker))
         {
             try p.closeLastBlock();
+        }
+    }
+
+    if (p.pending_blocks.getLastOrNull()) |last_pending_block| {
+        // If the last block is a list or list item, check for tightness based
+        // on the last line.
+        const maybe_containing_list = switch (last_pending_block.tag) {
+            .list => &p.pending_blocks.items[p.pending_blocks.items.len - 1],
+            .list_item => &p.pending_blocks.items[p.pending_blocks.items.len - 2],
+            else => null,
+        };
+        if (maybe_containing_list) |containing_list| {
+            if (containing_list.data.list.last_line_blank) {
+                containing_list.data.list.tight = false;
+            }
         }
     }
 
@@ -344,6 +377,7 @@ fn appendBlockStart(p: *Parser, block_start: BlockStart) !void {
             .data = .{ .list = .{
                 .marker = block_start.data.list_item.marker,
                 .start = block_start.data.list_item.number,
+                .tight = true,
             } },
             .string_start = p.scratch_string.items.len,
             .extra_start = p.scratch_extra.items.len,
@@ -542,23 +576,14 @@ fn closeLastBlock(p: *Parser) !void {
         .list => list: {
             assert(b.string_start == p.scratch_string.items.len);
 
-            // To more efficiently represent lists with only simple
-            // (inline-only) content, if the list contains only items with
-            // single paragraphs as children, the paragraphs are removed,
-            // leaving only their children as inline contents of the list items.
+            // Although tightness is parsed as a property of the list, it is
+            // stored at the list item level to make it possible to render each
+            // node without any context from its parents.
             const list_items = p.scratch_extra.items[b.extra_start..];
-            const nodes = p.nodes.slice();
-            const simple = for (list_items) |item| {
-                assert(nodes.items(.tag)[item] == .list_item);
-                const item_children = p.extraChildren(nodes.items(.data)[item].container.children);
-                if (item_children.len != 1 or
-                    nodes.items(.tag)[@intFromEnum(item_children[0])] != .paragraph) break false;
-            } else true;
-            if (simple) {
-                for (list_items) |item| {
-                    const item_children = p.extraChildren(nodes.items(.data)[item].container.children);
-                    const inline_children = nodes.items(.data)[@intFromEnum(item_children[0])].container.children;
-                    nodes.items(.data)[item].container.children = inline_children;
+            const node_datas = p.nodes.items(.data);
+            if (!b.data.list.tight) {
+                for (list_items) |list_item| {
+                    node_datas[list_item].list_item.tight = false;
                 }
             }
 
@@ -579,7 +604,8 @@ fn closeLastBlock(p: *Parser) !void {
             const children = try p.addExtraChildren(@ptrCast(p.scratch_extra.items[b.extra_start..]));
             break :list_item try p.addNode(.{
                 .tag = .list_item,
-                .data = .{ .container = .{
+                .data = .{ .list_item = .{
+                    .tight = true,
                     .children = children,
                 } },
             });

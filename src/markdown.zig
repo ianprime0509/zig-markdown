@@ -17,16 +17,9 @@
 //!   far as the end of the list item marker (including the space after it) is
 //!   considered part of the list item.
 //!
-//!   If a list consists only of items having only single paragraph children,
-//!   the wrapping paragraph blocks are removed, leaving only their inline
-//!   content as direct children of the list items. For example, the following
-//!   list has items with direct inline content rather than paragraph blocks:
-//!
-//!   ```markdown
-//!   - Item one.
-//!   - Item two.
-//!   - Item three.
-//!   ```
+//!   Lists which have no blank lines between items or between direct children
+//!   of items are considered _tight_, and direct child paragraphs of tight list
+//!   items are rendered without `<p>` tags.
 //!
 //! - **Heading** - a sequence of between 1 and 6 `#` characters, followed by a
 //!   space and further inline content on the same line.
