@@ -530,7 +530,8 @@ test "backslash escapes" {
         \\#\# Also not a title.
         \\\> Not a blockquote.
         \\\- Not a list item.
-        \\Other \characters can be \escaped\ \too\.
+        \\Any \punctuation\ characte\r can be escaped:
+        \\\!\"\#\$\%\&\'\(\)\*\+\,\-\.\/\:\;\<\=\>\?\@\[\\\]\^\_\`\{\|\}\~
         \\
     ,
         \\<p>Not *emphasized*.
@@ -540,7 +541,8 @@ test "backslash escapes" {
         \\## Also not a title.
         \\> Not a blockquote.
         \\- Not a list item.
-        \\Other characters can be escaped too.</p>
+        \\Any \punctuation\ characte\r can be escaped:
+        \\!"#$%&amp;'()*+,-./:;&lt;=>?@[\]^_`{|}~</p>
         \\
     );
 }

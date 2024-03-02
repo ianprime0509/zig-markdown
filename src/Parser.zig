@@ -1059,16 +1059,23 @@ const InlineParser = struct {
             if (iter.pos >= iter.content.len) return null;
             if (iter.content[iter.pos] == '\\') {
                 iter.pos += 1;
-                return switch (iter.nextCodepoint() orelse return null) {
-                    .char => |c| if (c == '\n') .line_break else .{ .char = c },
-                    else => |content| content,
-                };
+                if (iter.pos == iter.content.len) {
+                    return .{ .char = '\\' };
+                } else if (iter.content[iter.pos] == '\n') {
+                    iter.pos += 1;
+                    return .line_break;
+                } else if (isPunctuation(iter.content[iter.pos])) {
+                    const c = iter.content[iter.pos];
+                    iter.pos += 1;
+                    return .{ .char = c };
+                } else {
+                    return .{ .char = '\\' };
+                }
             }
             return iter.nextCodepoint();
         }
 
         fn nextCodepoint(iter: *TextIterator) ?Content {
-            if (iter.pos >= iter.content.len) return null;
             switch (iter.content[iter.pos]) {
                 0 => {
                     iter.pos += 1;
