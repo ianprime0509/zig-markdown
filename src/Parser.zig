@@ -21,6 +21,7 @@
 const std = @import("std");
 const mem = std.mem;
 const assert = std.debug.assert;
+const isWhitespace = std.ascii.isWhitespace;
 const Allocator = mem.Allocator;
 const Document = @import("Document.zig");
 const Node = Document.Node;
@@ -794,11 +795,22 @@ const InlineParser = struct {
             ip.pos += 1;
         }
         var len = ip.pos - start + 1;
-        const can_open = start + len < ip.content.len and
-            !std.ascii.isWhitespace(ip.content[start + len]);
-        const can_close = start > 0 and
-            !std.ascii.isWhitespace(ip.content[start - 1]);
         const underscore = char == '_';
+        const space_before = start == 0 or isWhitespace(ip.content[start - 1]);
+        const space_after = start + len == ip.content.len or isWhitespace(ip.content[start + len]);
+        const punct_before = start == 0 or isPunctuation(ip.content[start - 1]);
+        const punct_after = start + len == ip.content.len or isPunctuation(ip.content[start + len]);
+        // The rules for when emphasis may be closed or opened are stricter for
+        // underscores to avoid inappropriately interpreting snake_case words as
+        // containing emphasis markers.
+        const can_open = if (underscore)
+            !space_after and (space_before or punct_before)
+        else
+            !space_after;
+        const can_close = if (underscore)
+            !space_before and (space_after or punct_after)
+        else
+            !space_before;
 
         if (can_close and ip.pending_inlines.items.len > 0) {
             var i = ip.pending_inlines.items.len;
@@ -1150,4 +1162,43 @@ fn addScratchStringLine(p: *Parser, line: []const u8) !void {
 
 fn isBlank(line: []const u8) bool {
     return mem.indexOfNone(u8, line, " \t") == null;
+}
+
+fn isPunctuation(c: u8) bool {
+    return switch (c) {
+        '!',
+        '"',
+        '#',
+        '$',
+        '%',
+        '&',
+        '\'',
+        '(',
+        ')',
+        '*',
+        '+',
+        ',',
+        '-',
+        '.',
+        '/',
+        ':',
+        ';',
+        '<',
+        '=',
+        '>',
+        '?',
+        '@',
+        '[',
+        '\\',
+        ']',
+        '^',
+        '_',
+        '`',
+        '{',
+        '|',
+        '}',
+        '~',
+        => true,
+        else => false,
+    };
 }

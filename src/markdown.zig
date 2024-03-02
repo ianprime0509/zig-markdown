@@ -452,7 +452,7 @@ test "nested emphasis" {
         \\<strong><strong>Hello,</strong> world!</strong>
         \\<em><em>Hello,</em> world!</em>
         \\<em>Test</em><em>123</em>
-        \\<strong>Test</strong><strong>123</strong></p>
+        \\<strong>Test____123</strong></p>
         \\
     );
 }
@@ -478,7 +478,8 @@ test "emphasis open and close" {
         \\
         \\foo*bar*baz
         \\foo_bar_baz
-        \\underscores__and__**stars**workthesameway
+        \\foo**bar**baz
+        \\foo__bar__baz
         \\
     ,
         \\<p>Cannot open: *
@@ -486,8 +487,9 @@ test "emphasis open and close" {
         \\*Cannot close: *
         \\_Cannot close: _</p>
         \\<p>foo<em>bar</em>baz
-        \\foo<em>bar</em>baz
-        \\underscores<strong>and</strong><strong>stars</strong>workthesameway</p>
+        \\foo_bar_baz
+        \\foo<strong>bar</strong>baz
+        \\foo__bar__baz</p>
         \\
     );
 }
