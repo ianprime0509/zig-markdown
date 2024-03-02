@@ -112,8 +112,8 @@
 const std = @import("std");
 const testing = std.testing;
 
-pub const Document = @import("Document.zig");
-pub const Parser = @import("Parser.zig");
+pub const Document = @import("markdown/Document.zig");
+pub const Parser = @import("markdown/Parser.zig");
 
 // Avoid exposing main to other files merely importing this one.
 pub const main = if (@import("root") == @This())
