@@ -6,12 +6,12 @@
 //!
 //! - **List** - a sequence of list items of the same type.
 //!
-//! - **List item** - unordered list items start with either `-` or `*` followed
+//! - **List item** - unordered list items start with `-`, `*`, or `+` followed
 //!   by a space. Ordered list items start with a number between 0 and
-//!   999,999,999, followed by a space. The number of an ordered list item only
-//!   matters for the first item in the list (to determine the starting number
-//!   of the list). All subsequent ordered list items will have sequentially
-//!   increasing numbers.
+//!   999,999,999, followed by a `.` or `)` and a space. The number of an
+//!   ordered list item only matters for the first item in the list (to
+//!   determine the starting number of the list). All subsequent ordered list
+//!   items will have sequentially increasing numbers.
 //!
 //!   All list items may contain block content. Any content indented at least as
 //!   far as the end of the list item marker (including the space after it) is
@@ -155,6 +155,20 @@ test "unordered lists" {
         \\- Bacon
         \\- Spam
         \\
+        \\* Spam
+        \\* Spam
+        \\* Spam
+        \\* Eggs
+        \\* Bacon
+        \\* Spam
+        \\
+        \\+ Spam
+        \\+ Spam
+        \\+ Spam
+        \\+ Eggs
+        \\+ Bacon
+        \\+ Spam
+        \\
     ,
         \\<ul>
         \\<li>Spam</li>
@@ -164,17 +178,14 @@ test "unordered lists" {
         \\<li>Bacon</li>
         \\<li>Spam</li>
         \\</ul>
-        \\
-    );
-    try testRender(
-        \\* Spam
-        \\* Spam
-        \\* Spam
-        \\* Eggs
-        \\* Bacon
-        \\* Spam
-        \\
-    ,
+        \\<ul>
+        \\<li>Spam</li>
+        \\<li>Spam</li>
+        \\<li>Spam</li>
+        \\<li>Eggs</li>
+        \\<li>Bacon</li>
+        \\<li>Spam</li>
+        \\</ul>
         \\<ul>
         \\<li>Spam</li>
         \\<li>Spam</li>
@@ -197,6 +208,30 @@ test "ordered lists" {
         \\6. Dessert
         \\7. Midnight snack
         \\
+        \\1) Breakfast
+        \\2) Second breakfast
+        \\3) Lunch
+        \\2) Afternoon snack
+        \\1) Dinner
+        \\6) Dessert
+        \\7) Midnight snack
+        \\
+        \\1001. Breakfast
+        \\2. Second breakfast
+        \\3. Lunch
+        \\2. Afternoon snack
+        \\1. Dinner
+        \\6. Dessert
+        \\7. Midnight snack
+        \\
+        \\1001) Breakfast
+        \\2) Second breakfast
+        \\3) Lunch
+        \\2) Afternoon snack
+        \\1) Dinner
+        \\6) Dessert
+        \\7) Midnight snack
+        \\
     ,
         \\<ol>
         \\<li>Breakfast</li>
@@ -207,18 +242,24 @@ test "ordered lists" {
         \\<li>Dessert</li>
         \\<li>Midnight snack</li>
         \\</ol>
-        \\
-    );
-    try testRender(
-        \\1001. Breakfast
-        \\2. Second breakfast
-        \\3. Lunch
-        \\2. Afternoon snack
-        \\1. Dinner
-        \\6. Dessert
-        \\7. Midnight snack
-        \\
-    ,
+        \\<ol>
+        \\<li>Breakfast</li>
+        \\<li>Second breakfast</li>
+        \\<li>Lunch</li>
+        \\<li>Afternoon snack</li>
+        \\<li>Dinner</li>
+        \\<li>Dessert</li>
+        \\<li>Midnight snack</li>
+        \\</ol>
+        \\<ol start="1001">
+        \\<li>Breakfast</li>
+        \\<li>Second breakfast</li>
+        \\<li>Lunch</li>
+        \\<li>Afternoon snack</li>
+        \\<li>Dinner</li>
+        \\<li>Dessert</li>
+        \\<li>Midnight snack</li>
+        \\</ol>
         \\<ol start="1001">
         \\<li>Breakfast</li>
         \\<li>Second breakfast</li>

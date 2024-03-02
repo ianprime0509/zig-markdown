@@ -85,7 +85,13 @@ const Block = struct {
             indent: usize,
         },
 
-        const ListMarker = enum { @"-", @"*", number };
+        const ListMarker = enum {
+            @"-",
+            @"*",
+            @"+",
+            number_dot,
+            number_paren,
+        };
     };
 
     const ContentType = enum {
@@ -480,17 +486,27 @@ fn startListItem(unindented_line: []const u8) ?ListItemStart {
             .continuation_indent = 2,
             .rest = unindented_line[2..],
         };
+    } else if (mem.startsWith(u8, unindented_line, "+ ")) {
+        return .{
+            .marker = .@"+",
+            .number = undefined,
+            .continuation_indent = 2,
+            .rest = unindented_line[2..],
+        };
     }
 
     const number_end = mem.indexOfNone(u8, unindented_line, "0123456789") orelse return null;
     const after_number = unindented_line[number_end..];
-    if (!mem.startsWith(u8, after_number, ". ")) {
+    const marker: Block.Data.ListMarker = if (mem.startsWith(u8, after_number, ". "))
+        .number_dot
+    else if (mem.startsWith(u8, after_number, ") "))
+        .number_paren
+    else
         return null;
-    }
     const number = std.fmt.parseInt(u30, unindented_line[0..number_end], 10) catch return null;
     if (number > 999_999_999) return null;
     return .{
-        .marker = .number,
+        .marker = marker,
         .number = number,
         .continuation_indent = number_end + 2,
         .rest = after_number[2..],
@@ -592,8 +608,8 @@ fn closeLastBlock(p: *Parser) !void {
                 .tag = .list,
                 .data = .{ .list = .{
                     .start = switch (b.data.list.marker) {
-                        .number => @enumFromInt(b.data.list.start),
-                        .@"-", .@"*" => .unordered,
+                        .number_dot, .number_paren => @enumFromInt(b.data.list.start),
+                        .@"-", .@"*", .@"+" => .unordered,
                     },
                     .children = children,
                 } },
