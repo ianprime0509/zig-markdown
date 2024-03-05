@@ -372,10 +372,14 @@ fn appendBlockStart(p: *Parser, block_start: BlockStart) !void {
     if (p.pending_blocks.getLastOrNull()) |last_pending_block| {
         // Close the last block if it is a list and the new block is not a list item
         // or not of the same marker type.
-        if (last_pending_block.tag == .list and
+        const should_close_list = last_pending_block.tag == .list and
             (block_start.tag != .list_item or
-            block_start.data.list_item.marker != last_pending_block.data.list.marker))
-        {
+            block_start.data.list_item.marker != last_pending_block.data.list.marker);
+        // The last block should also be closed if the new block is not a table
+        // row, which is the only allowed child of a table.
+        const should_close_table = last_pending_block.tag == .table and
+            block_start.tag != .table_row;
+        if (should_close_list or should_close_table) {
             try p.closeLastBlock();
         }
     }
@@ -620,6 +624,18 @@ fn startTableRow(unindented_line: []const u8) ?TableRowStart {
             '|' => {
                 cells.append(table_row_content[cell_start..i]) catch return null;
                 cell_start = i + 1;
+            },
+            '`' => {
+                // Ignoring pipes in code spans allows table cells to contain
+                // code using ||, for example.
+                const open_start = i;
+                i = mem.indexOfNonePos(u8, table_row_content, i, "`") orelse return null;
+                const open_len = i - open_start;
+                while (mem.indexOfScalarPos(u8, table_row_content, i, '`')) |close_start| {
+                    i = mem.indexOfNonePos(u8, table_row_content, close_start, "`") orelse return null;
+                    const close_len = i - close_start;
+                    if (close_len == open_len) break;
+                } else return null;
             },
             else => {},
         }

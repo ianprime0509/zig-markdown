@@ -1,6 +1,7 @@
 //! An abstract tree representation of a Markdown document.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Renderer = @import("renderer.zig").Renderer;
@@ -100,6 +101,15 @@ pub const Node = struct {
             target: StringIndex,
             children: ExtraIndex,
         },
+
+        comptime {
+            // In Debug and ReleaseSafe builds, there may be hidden extra fields
+            // included for safety checks. Without such safety checks enabled,
+            // we always want this union to be 8 bytes.
+            if (builtin.mode != .Debug and builtin.mode != .ReleaseSafe) {
+                assert(@sizeOf(Data) == 8);
+            }
+        }
     };
 
     /// The starting number of a list. This is either a number between 0 and

@@ -479,6 +479,38 @@ test "table with escaped pipes" {
     );
 }
 
+test "table with pipes in code spans" {
+    try testRender(
+        \\| `|` | Bitwise _OR_ |
+        \\| `||` | Combines error sets |
+        \\| `` `||` `` | Escaped version |
+        \\| ` ``||`` ` | Another escaped version |
+        \\| `Oops unterminated code span |
+        \\
+    ,
+        \\<table>
+        \\<tr>
+        \\<td><code>|</code></td>
+        \\<td>Bitwise <em>OR</em></td>
+        \\</tr>
+        \\<tr>
+        \\<td><code>||</code></td>
+        \\<td>Combines error sets</td>
+        \\</tr>
+        \\<tr>
+        \\<td><code>`||`</code></td>
+        \\<td>Escaped version</td>
+        \\</tr>
+        \\<tr>
+        \\<td><code>``||``</code></td>
+        \\<td>Another escaped version</td>
+        \\</tr>
+        \\</table>
+        \\<p>| <code>Oops unterminated code span |</code></p>
+        \\
+    );
+}
+
 test "tables require leading and trailing pipes" {
     try testRender(
         \\Not | a | table
