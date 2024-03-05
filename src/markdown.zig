@@ -21,6 +21,17 @@
 //!   of items are considered _tight_, and direct child paragraphs of tight list
 //!   items are rendered without `<p>` tags.
 //!
+//! - **Table** - a sequence of adjacent table row lines, where each line starts
+//!   and ends with a `|`, and cells within the row are delimited by `|`s.
+//!
+//!   The first or second row of a table may be a _header delimiter row_, which
+//!   is a row consisting of cells of the pattern `---` (for unset column
+//!   alignment), `:--` (for left alignment), `:-:` (for center alignment), or
+//!   `--:` (for right alignment). The number of `-`s must be at least one, but
+//!   is otherwise arbitrary. If there is a row just before the header delimiter
+//!   row, it becomes the header row for the table (a table need not have a
+//!   header row at all).
+//!
 //! - **Heading** - a sequence of between 1 and 6 `#` characters, followed by a
 //!   space and further inline content on the same line.
 //!

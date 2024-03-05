@@ -23,6 +23,7 @@ const mem = std.mem;
 const assert = std.debug.assert;
 const isWhitespace = std.ascii.isWhitespace;
 const Allocator = mem.Allocator;
+const expectEqual = std.testing.expectEqual;
 const Document = @import("Document.zig");
 const Node = Document.Node;
 const ExtraIndex = Document.ExtraIndex;
@@ -39,7 +40,10 @@ allocator: Allocator,
 
 const Parser = @This();
 
-const max_table_columns = 256;
+/// An arbitrary limit on the maximum number of columns in a table so that
+/// table-related metadata maintained by the parser does not require dynamic
+/// memory allocation.
+const max_table_columns = 128;
 
 /// A block element which is still receiving children.
 const Block = struct {
@@ -639,7 +643,9 @@ fn parseTableHeaderDelimiter(
 fn parseTableHeaderDelimiterCell(content: []const u8) ?Node.TableCellAlignment {
     var state: enum {
         before_rule,
+        after_left_anchor,
         in_rule,
+        after_right_anchor,
         after_rule,
     } = .before_rule;
     var left_anchor = false;
@@ -650,8 +656,12 @@ fn parseTableHeaderDelimiterCell(content: []const u8) ?Node.TableCellAlignment {
                 ' ' => {},
                 ':' => {
                     left_anchor = true;
-                    state = .in_rule;
+                    state = .after_left_anchor;
                 },
+                '-' => state = .in_rule,
+                else => return null,
+            },
+            .after_left_anchor => switch (c) {
                 '-' => state = .in_rule,
                 else => return null,
             },
@@ -659,8 +669,12 @@ fn parseTableHeaderDelimiterCell(content: []const u8) ?Node.TableCellAlignment {
                 '-' => {},
                 ':' => {
                     right_anchor = true;
-                    state = .after_rule;
+                    state = .after_right_anchor;
                 },
+                ' ' => state = .after_rule,
+                else => return null,
+            },
+            .after_right_anchor => switch (c) {
                 ' ' => state = .after_rule,
                 else => return null,
             },
@@ -670,6 +684,18 @@ fn parseTableHeaderDelimiterCell(content: []const u8) ?Node.TableCellAlignment {
             },
         }
     }
+
+    switch (state) {
+        .before_rule,
+        .after_left_anchor,
+        => return null,
+
+        .in_rule,
+        .after_right_anchor,
+        .after_rule,
+        => {},
+    }
+
     return if (left_anchor and right_anchor)
         .center
     else if (left_anchor)
@@ -678,6 +704,25 @@ fn parseTableHeaderDelimiterCell(content: []const u8) ?Node.TableCellAlignment {
         .right
     else
         .unset;
+}
+
+test parseTableHeaderDelimiterCell {
+    try expectEqual(null, parseTableHeaderDelimiterCell(""));
+    try expectEqual(null, parseTableHeaderDelimiterCell("   "));
+    try expectEqual(.unset, parseTableHeaderDelimiterCell("-"));
+    try expectEqual(.unset, parseTableHeaderDelimiterCell(" - "));
+    try expectEqual(.unset, parseTableHeaderDelimiterCell("----"));
+    try expectEqual(.unset, parseTableHeaderDelimiterCell(" ---- "));
+    try expectEqual(null, parseTableHeaderDelimiterCell(":"));
+    try expectEqual(null, parseTableHeaderDelimiterCell("::"));
+    try expectEqual(.left, parseTableHeaderDelimiterCell(":-"));
+    try expectEqual(.left, parseTableHeaderDelimiterCell(" :----"));
+    try expectEqual(.center, parseTableHeaderDelimiterCell(":-:"));
+    try expectEqual(.center, parseTableHeaderDelimiterCell(":----:"));
+    try expectEqual(.center, parseTableHeaderDelimiterCell("   :----:   "));
+    try expectEqual(.right, parseTableHeaderDelimiterCell("-:"));
+    try expectEqual(.right, parseTableHeaderDelimiterCell("----:"));
+    try expectEqual(.right, parseTableHeaderDelimiterCell("  ----:  "));
 }
 
 const HeadingStart = struct {
