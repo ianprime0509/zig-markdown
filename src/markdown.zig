@@ -351,6 +351,139 @@ test "lists with block content" {
     );
 }
 
+test "tables" {
+    try testRender(
+        \\| Operator | Meaning          |
+        \\| :------: | ---------------- |
+        \\| `+`      | Add              |
+        \\| `-`      | Subtract         |
+        \\| `*`      | Multiply         |
+        \\| `/`      | Divide           |
+        \\| `??`     | **Not sure yet** |
+        \\
+        \\| Item 1 | Value 1 |
+        \\| Item 2 | Value 2 |
+        \\| Item 3 | Value 3 |
+        \\| Item 4 | Value 4 |
+        \\
+        \\| :--- | :----: | ----: |
+        \\| Left | Center | Right |
+        \\
+    ,
+        \\<table>
+        \\<tr>
+        \\<th style="text-align: center">Operator</th>
+        \\<th>Meaning</th>
+        \\</tr>
+        \\<tr>
+        \\<td style="text-align: center"><code>+</code></td>
+        \\<td>Add</td>
+        \\</tr>
+        \\<tr>
+        \\<td style="text-align: center"><code>-</code></td>
+        \\<td>Subtract</td>
+        \\</tr>
+        \\<tr>
+        \\<td style="text-align: center"><code>*</code></td>
+        \\<td>Multiply</td>
+        \\</tr>
+        \\<tr>
+        \\<td style="text-align: center"><code>/</code></td>
+        \\<td>Divide</td>
+        \\</tr>
+        \\<tr>
+        \\<td style="text-align: center"><code>??</code></td>
+        \\<td><strong>Not sure yet</strong></td>
+        \\</tr>
+        \\</table>
+        \\<table>
+        \\<tr>
+        \\<td>Item 1</td>
+        \\<td>Value 1</td>
+        \\</tr>
+        \\<tr>
+        \\<td>Item 2</td>
+        \\<td>Value 2</td>
+        \\</tr>
+        \\<tr>
+        \\<td>Item 3</td>
+        \\<td>Value 3</td>
+        \\</tr>
+        \\<tr>
+        \\<td>Item 4</td>
+        \\<td>Value 4</td>
+        \\</tr>
+        \\</table>
+        \\<table>
+        \\<tr>
+        \\<td style="text-align: left">Left</td>
+        \\<td style="text-align: center">Center</td>
+        \\<td style="text-align: right">Right</td>
+        \\</tr>
+        \\</table>
+        \\
+    );
+}
+
+test "table with uneven number of columns" {
+    try testRender(
+        \\| One |
+        \\| :-- | :--: |
+        \\| One | Two | Three |
+        \\
+    ,
+        \\<table>
+        \\<tr>
+        \\<th style="text-align: left">One</th>
+        \\</tr>
+        \\<tr>
+        \\<td style="text-align: left">One</td>
+        \\<td style="text-align: center">Two</td>
+        \\<td>Three</td>
+        \\</tr>
+        \\</table>
+        \\
+    );
+}
+
+test "table with escaped pipes" {
+    try testRender(
+        \\| One \| Two |
+        \\| --- | --- |
+        \\| One \| Two |
+        \\
+    ,
+        \\<table>
+        \\<tr>
+        \\<th>One | Two</th>
+        \\</tr>
+        \\<tr>
+        \\<td>One | Two</td>
+        \\</tr>
+        \\</table>
+        \\
+    );
+}
+
+test "tables require leading and trailing pipes" {
+    try testRender(
+        \\Not | a | table
+        \\
+        \\| But | this | is |
+        \\
+    ,
+        \\<p>Not | a | table</p>
+        \\<table>
+        \\<tr>
+        \\<td>But</td>
+        \\<td>this</td>
+        \\<td>is</td>
+        \\</tr>
+        \\</table>
+        \\
+    );
+}
+
 test "headings" {
     try testRender(
         \\# Level one
@@ -688,6 +821,8 @@ test "backslash escapes" {
         \\#\# Also not a title.
         \\\> Not a blockquote.
         \\\- Not a list item.
+        \\\| Not a table. |
+        \\| Also not a table. \|
         \\Any \punctuation\ characte\r can be escaped:
         \\\!\"\#\$\%\&\'\(\)\*\+\,\-\.\/\:\;\<\=\>\?\@\[\\\]\^\_\`\{\|\}\~
         \\
@@ -699,6 +834,8 @@ test "backslash escapes" {
         \\## Also not a title.
         \\&gt; Not a blockquote.
         \\- Not a list item.
+        \\| Not a table. |
+        \\| Also not a table. |
         \\Any \punctuation\ characte\r can be escaped:
         \\!&quot;#$%&amp;'()*+,-./:;&lt;=&gt;?@[\]^_`{|}~</p>
         \\

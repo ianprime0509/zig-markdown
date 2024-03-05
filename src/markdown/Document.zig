@@ -29,6 +29,12 @@ pub const Node = struct {
         list,
         /// Data is `list_item`.
         list_item,
+        /// Data is `container`.
+        table,
+        /// Data is `container`.
+        table_row,
+        /// Data is `table_cell`.
+        table_cell,
         /// Data is `heading`.
         heading,
         /// Data is `code_block`.
@@ -73,6 +79,13 @@ pub const Node = struct {
             tight: bool,
             children: ExtraIndex,
         },
+        table_cell: struct {
+            info: packed struct {
+                alignment: TableCellAlignment,
+                header: bool,
+            },
+            children: ExtraIndex,
+        },
         heading: struct {
             /// Between 1 and 6, inclusive.
             level: u3,
@@ -103,6 +116,13 @@ pub const Node = struct {
             assert(@intFromEnum(start) <= 999_999_999);
             return @intFromEnum(start);
         }
+    };
+
+    pub const TableCellAlignment = enum {
+        unset,
+        left,
+        center,
+        right,
     };
 
     /// Trailing: `len` times `Node.Index`
@@ -188,6 +208,41 @@ pub fn Renderer(comptime Writer: type, comptime Context: type) type {
                     }
                     try writer.writeAll("</li>\n");
                 },
+                .table => {
+                    try writer.writeAll("<table>\n");
+                    for (doc.extraChildren(data.container.children)) |child| {
+                        try r.renderFn(r, doc, child, writer);
+                    }
+                    try writer.writeAll("</table>\n");
+                },
+                .table_row => {
+                    try writer.writeAll("<tr>\n");
+                    for (doc.extraChildren(data.container.children)) |child| {
+                        try r.renderFn(r, doc, child, writer);
+                    }
+                    try writer.writeAll("</tr>\n");
+                },
+                .table_cell => {
+                    if (data.table_cell.info.header) {
+                        try writer.writeAll("<th");
+                    } else {
+                        try writer.writeAll("<td");
+                    }
+                    switch (data.table_cell.info.alignment) {
+                        .unset => try writer.writeAll(">"),
+                        else => |a| try writer.print(" style=\"text-align: {s}\">", .{@tagName(a)}),
+                    }
+
+                    for (doc.extraChildren(data.table_cell.children)) |child| {
+                        try r.renderFn(r, doc, child, writer);
+                    }
+
+                    if (data.table_cell.info.header) {
+                        try writer.writeAll("</th>\n");
+                    } else {
+                        try writer.writeAll("</td>\n");
+                    }
+                },
                 .heading => {
                     try writer.print("<h{}>", .{data.heading.level});
                     for (doc.extraChildren(data.heading.children)) |child| {
@@ -272,7 +327,8 @@ pub fn render(doc: Document, writer: anytype) @TypeOf(writer).Error!void {
     try renderer.render(doc, writer);
 }
 
-/// Renders an inline node as plain text.
+/// Renders an inline node as plain text. Asserts that the node is an inline and
+/// has no non-inline children.
 pub fn renderInlineNodeText(
     doc: Document,
     node: Node.Index,
@@ -283,6 +339,9 @@ pub fn renderInlineNodeText(
         .root,
         .list,
         .list_item,
+        .table,
+        .table_row,
+        .table_cell,
         .heading,
         .code_block,
         .blockquote,

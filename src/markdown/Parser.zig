@@ -39,6 +39,8 @@ allocator: Allocator,
 
 const Parser = @This();
 
+const max_table_columns = 256;
+
 /// A block element which is still receiving children.
 const Block = struct {
     tag: Tag,
@@ -51,6 +53,10 @@ const Block = struct {
         list,
         /// Data is `list_item`.
         list_item,
+        /// Data is `table`.
+        table,
+        /// Data is `none`.
+        table_row,
         /// Data is `heading`.
         heading,
         /// Data is `code_block`.
@@ -74,6 +80,9 @@ const Block = struct {
         },
         list_item: struct {
             continuation_indent: usize,
+        },
+        table: struct {
+            column_alignments: std.BoundedArray(Node.TableCellAlignment, max_table_columns) = .{},
         },
         heading: struct {
             /// Between 1 and 6, inclusive.
@@ -105,6 +114,7 @@ const Block = struct {
         return switch (b.tag) {
             .list,
             .list_item,
+            .table,
             .blockquote,
             => .blocks,
 
@@ -115,6 +125,7 @@ const Block = struct {
             .code_block,
             => .raw_inlines,
 
+            .table_row,
             .thematic_break,
             => .nothing,
         };
@@ -137,6 +148,8 @@ const Block = struct {
                 ""
             else
                 null,
+            .table => if (unindented.len > 0) unindented else null,
+            .table_row => null,
             .heading => null,
             .code_block => code_block: {
                 const trimmed = mem.trimRight(u8, unindented, " \t");
@@ -315,6 +328,8 @@ const BlockStart = struct {
     const Tag = enum {
         /// Data is `list_item`.
         list_item,
+        /// Data is `table_row`.
+        table_row,
         /// Data is `heading`.
         heading,
         /// Data is `code_block`.
@@ -333,6 +348,9 @@ const BlockStart = struct {
             marker: Block.Data.ListMarker,
             number: u30,
             continuation_indent: usize,
+        },
+        table_row: struct {
+            cells: std.BoundedArray([]const u8, max_table_columns),
         },
         heading: struct {
             /// Between 1 and 6, inclusive.
@@ -390,10 +408,45 @@ fn appendBlockStart(p: *Parser, block_start: BlockStart) !void {
         });
     }
 
+    if (block_start.tag == .table_row) {
+        // Likewise, table rows start a table implicitly.
+        if (p.pending_blocks.items.len == 0 or p.pending_blocks.getLast().tag != .table) {
+            try p.pending_blocks.append(p.allocator, .{
+                .tag = .table,
+                .data = .{ .table = .{
+                    .column_alignments = .{},
+                } },
+                .string_start = p.scratch_string.items.len,
+                .extra_start = p.scratch_extra.items.len,
+            });
+        }
+
+        const current_row = p.scratch_extra.items.len - p.pending_blocks.getLast().extra_start;
+        if (current_row <= 1) {
+            if (parseTableHeaderDelimiter(block_start.data.table_row.cells)) |alignments| {
+                p.pending_blocks.items[p.pending_blocks.items.len - 1].data.table.column_alignments = alignments;
+                if (current_row == 1) {
+                    // We need to go back and mark the header row and its column
+                    // alignments.
+                    const datas = p.nodes.items(.data);
+                    const header_data = datas[p.scratch_extra.getLast()];
+                    for (p.extraChildren(header_data.container.children), 0..) |header_cell, i| {
+                        const alignment = if (i < alignments.len) alignments.buffer[i] else .unset;
+                        const cell_data = &datas[@intFromEnum(header_cell)].table_cell;
+                        cell_data.info.alignment = alignment;
+                        cell_data.info.header = true;
+                    }
+                }
+                return;
+            }
+        }
+    }
+
     const tag: Block.Tag, const data: Block.Data = switch (block_start.tag) {
         .list_item => .{ .list_item, .{ .list_item = .{
             .continuation_indent = block_start.data.list_item.continuation_indent,
         } } },
+        .table_row => .{ .table_row, .{ .none = {} } },
         .heading => .{ .heading, .{ .heading = .{
             .level = block_start.data.heading.level,
         } } },
@@ -413,6 +466,29 @@ fn appendBlockStart(p: *Parser, block_start: BlockStart) !void {
         .string_start = p.scratch_string.items.len,
         .extra_start = p.scratch_extra.items.len,
     });
+
+    if (tag == .table_row) {
+        // Table rows are unique, since we already have all the children
+        // available in the BlockStart. We can immediately parse and append
+        // these children now.
+        const containing_table = p.pending_blocks.items[p.pending_blocks.items.len - 2];
+        const column_alignments = containing_table.data.table.column_alignments.slice();
+        for (block_start.data.table_row.cells.slice(), 0..) |cell_content, i| {
+            const cell_children = try p.parseInlines(cell_content);
+            const alignment = if (i < column_alignments.len) column_alignments[i] else .unset;
+            const cell = try p.addNode(.{
+                .tag = .table_cell,
+                .data = .{ .table_cell = .{
+                    .info = .{
+                        .alignment = alignment,
+                        .header = false,
+                    },
+                    .children = cell_children,
+                } },
+            });
+            try p.addScratchExtraNode(cell);
+        }
+    }
 }
 
 fn startBlock(p: *Parser, line: []const u8) !?BlockStart {
@@ -434,6 +510,14 @@ fn startBlock(p: *Parser, line: []const u8) !?BlockStart {
                 .continuation_indent = list_item.continuation_indent,
             } },
             .rest = list_item.rest,
+        };
+    } else if (startTableRow(unindented)) |table_row| {
+        return .{
+            .tag = .table_row,
+            .data = .{ .table_row = .{
+                .cells = table_row.cells,
+            } },
+            .rest = "",
         };
     } else if (startHeading(unindented)) |heading| {
         return .{
@@ -511,6 +595,89 @@ fn startListItem(unindented_line: []const u8) ?ListItemStart {
         .continuation_indent = number_end + 2,
         .rest = after_number[2..],
     };
+}
+
+const TableRowStart = struct {
+    cells: std.BoundedArray([]const u8, max_table_columns),
+};
+
+fn startTableRow(unindented_line: []const u8) ?TableRowStart {
+    if (!mem.startsWith(u8, unindented_line, "|") or
+        mem.endsWith(u8, unindented_line, "\\|") or
+        !mem.endsWith(u8, unindented_line, "|")) return null;
+
+    var cells: std.BoundedArray([]const u8, max_table_columns) = .{};
+    const table_row_content = unindented_line[1 .. unindented_line.len - 1];
+    var cell_start: usize = 0;
+    var i: usize = 0;
+    while (i < table_row_content.len) : (i += 1) {
+        switch (table_row_content[i]) {
+            '\\' => i += 1,
+            '|' => {
+                cells.append(table_row_content[cell_start..i]) catch return null;
+                cell_start = i + 1;
+            },
+            else => {},
+        }
+    }
+    cells.append(table_row_content[cell_start..]) catch return null;
+
+    return .{ .cells = cells };
+}
+
+fn parseTableHeaderDelimiter(
+    row_cells: std.BoundedArray([]const u8, max_table_columns),
+) ?std.BoundedArray(Node.TableCellAlignment, max_table_columns) {
+    var alignments: std.BoundedArray(Node.TableCellAlignment, max_table_columns) = .{};
+    for (row_cells.slice()) |content| {
+        const alignment = parseTableHeaderDelimiterCell(content) orelse return null;
+        alignments.appendAssumeCapacity(alignment);
+    }
+    return alignments;
+}
+
+fn parseTableHeaderDelimiterCell(content: []const u8) ?Node.TableCellAlignment {
+    var state: enum {
+        before_rule,
+        in_rule,
+        after_rule,
+    } = .before_rule;
+    var left_anchor = false;
+    var right_anchor = false;
+    for (content) |c| {
+        switch (state) {
+            .before_rule => switch (c) {
+                ' ' => {},
+                ':' => {
+                    left_anchor = true;
+                    state = .in_rule;
+                },
+                '-' => state = .in_rule,
+                else => return null,
+            },
+            .in_rule => switch (c) {
+                '-' => {},
+                ':' => {
+                    right_anchor = true;
+                    state = .after_rule;
+                },
+                ' ' => state = .after_rule,
+                else => return null,
+            },
+            .after_rule => switch (c) {
+                ' ' => {},
+                else => return null,
+            },
+        }
+    }
+    return if (left_anchor and right_anchor)
+        .center
+    else if (left_anchor)
+        .left
+    else if (right_anchor)
+        .right
+    else
+        .unset;
 }
 
 const HeadingStart = struct {
@@ -622,6 +789,26 @@ fn closeLastBlock(p: *Parser) !void {
                 .tag = .list_item,
                 .data = .{ .list_item = .{
                     .tight = true,
+                    .children = children,
+                } },
+            });
+        },
+        .table => table: {
+            assert(b.string_start == p.scratch_string.items.len);
+            const children = try p.addExtraChildren(@ptrCast(p.scratch_extra.items[b.extra_start..]));
+            break :table try p.addNode(.{
+                .tag = .table,
+                .data = .{ .container = .{
+                    .children = children,
+                } },
+            });
+        },
+        .table_row => table_row: {
+            assert(b.string_start == p.scratch_string.items.len);
+            const children = try p.addExtraChildren(@ptrCast(p.scratch_extra.items[b.extra_start..]));
+            break :table_row try p.addNode(.{
+                .tag = .table_row,
+                .data = .{ .container = .{
                     .children = children,
                 } },
             });
@@ -1149,7 +1336,7 @@ const InlineParser = struct {
 fn parseInlines(p: *Parser, content: []const u8) !ExtraIndex {
     var ip: InlineParser = .{
         .parent = p,
-        .content = mem.trimRight(u8, content, " \t\n"),
+        .content = mem.trim(u8, content, " \t\n"),
     };
     defer ip.deinit();
     return try ip.parse();
